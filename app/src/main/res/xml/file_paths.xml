@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the folders the app actually shares from (see BarcodeGenerator / BarcodePdfExporter). -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="cache_files" path="." />
+    <external-files-path name="qr_external" path="Pictures/MIDAR_QR/" />
+    <files-path name="qr_internal" path="MIDAR_QR/" />
+</paths>

@@ -1,0 +1,49 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+local.properties
+**/local.properties
+secrets.properties
+secrets.defaults.properties
+**/secrets.properties
+**/secrets.defaults.properties
+
+# Signing keys / certificates / credentials
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+service-account*.json
+credentials*.json
+
+# Android / Gradle build output
+.gradle/
+**/build/
+**/.gradle/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# IDE and OS files
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+captures/
+
+# Supabase local state
+supabase/.temp/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp

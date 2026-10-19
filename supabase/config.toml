@@ -1,0 +1,13 @@
+project_id = "oknpfsvmopdsgsfbbdcs"
+
+# JWT verification per function (matches production).
+[functions.waha-session]
+verify_jwt = true
+
+# Called by WAHA with an HMAC signature, not a Supabase JWT.
+[functions.waha-webhook]
+verify_jwt = false
+
+# Called by pg_cron/pg_net with a shared secret, not a Supabase JWT.
+[functions.studentmanager-notification-worker]
+verify_jwt = false

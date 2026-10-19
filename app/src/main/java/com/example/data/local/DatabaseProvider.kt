@@ -1,0 +1,99 @@
+package com.example.data.local
+
+import android.content.Context
+import androidx.room.Room
+import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+
+object DatabaseProvider {
+    @Volatile
+    private var instance: AppDatabase? = null
+    @Volatile
+    private var appContext: Context? = null
+
+    val context: Context
+        get() = appContext ?: throw IllegalStateException("DatabaseProvider not initialized with Context.")
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+        if (instance == null) {
+            synchronized(this) {
+                if (instance == null) {
+                    instance = buildDatabase(context.applicationContext)
+                }
+            }
+        }
+    }
+
+    fun setDatabase(database: AppDatabase, context: Context? = null) {
+        instance = database
+        if (context != null) {
+            appContext = context.applicationContext
+        }
+    }
+
+    fun resetForTesting() {
+        instance = null
+        appContext = null
+    }
+
+    suspend fun clearDataForTeacher(teacherId: String) = withContext(NonCancellable + Dispatchers.IO) {
+        if (teacherId.isBlank()) return@withContext
+        val db = instance ?: return@withContext
+        db.withTransaction {
+            db.studentDao().deleteStudentsByTeacher(teacherId)
+            db.attendanceDao().deleteAttendanceByTeacher(teacherId)
+            db.recitationDao().deleteRecitationsByTeacher(teacherId)
+            db.examDao().deleteExamsByTeacher(teacherId)
+            db.paymentDao().deletePaymentsByTeacher(teacherId)
+            db.homeworkDao().deleteHomeworkByTeacher(teacherId)
+            db.gradeDao().deleteGradesByTeacher(teacherId)
+            db.groupDao().deleteGroupsByTeacher(teacherId)
+            db.groupDayDao().deleteGroupDaysByTeacher(teacherId)
+            db.outboxDao().clearOperationsForTeacher(teacherId)
+        }
+    }
+
+    suspend fun clearAllData() = withContext(NonCancellable + Dispatchers.IO) {
+        instance?.clearAllTables()
+    }
+
+    fun clearAllDataSync() {
+        instance?.clearAllTables()
+    }
+
+    fun getDatabase(context: Context? = null): AppDatabase {
+        if (context != null && appContext == null) {
+            appContext = context.applicationContext
+        }
+        return instance ?: synchronized(this) {
+            instance ?: run {
+                if (context != null) {
+                    buildDatabase(context.applicationContext).also {
+                        instance = it
+                        appContext = context.applicationContext
+                    }
+                } else {
+                    throw IllegalStateException("DatabaseProvider must be initialized with a Context.")
+                }
+            }
+        }
+    }
+
+    private fun buildDatabase(context: Context): AppDatabase {
+        return Room.databaseBuilder(
+            context,
+            AppDatabase::class.java,
+            "quran_app.db"
+        ).addMigrations(
+            AppDatabase.MIGRATION_1_2,
+            AppDatabase.MIGRATION_2_3,
+            AppDatabase.MIGRATION_3_4,
+            AppDatabase.MIGRATION_4_5,
+            AppDatabase.MIGRATION_5_6,
+            AppDatabase.MIGRATION_6_7
+        ).build()
+    }
+}
