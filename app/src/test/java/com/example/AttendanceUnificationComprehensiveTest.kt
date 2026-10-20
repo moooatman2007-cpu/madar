@@ -12,9 +12,11 @@ import com.example.data.repository.NotificationEventRepository
 import com.example.core.model.NotificationEvent
 import com.example.data.repository.NotificationEventCreationResult
 import com.example.data.repository.NotificationWorkerResult
+import com.example.data.repository.MockGroupRepository
 import com.example.data.repository.MockPaymentRepository
 import com.example.data.repository.MockRecitationRepository
 import com.example.data.repository.MockStudentRepository
+import com.example.data.repository.MockTeacherRepository
 import com.example.ui.attendance.FastAttendanceViewModel
 import com.example.ui.attendance.ScanResultType
 import com.example.ui.start_lesson.StartLessonViewModel
@@ -67,6 +69,7 @@ class AttendanceUnificationComprehensiveTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        com.example.data.SupabaseClientProvider.mockTeacherId = "teacher_test"
         gradeRepository = MockGradeRepository(initialStage = EducationalStages.SECONDARY)
         studentRepository = MockStudentRepository(gradeRepository = gradeRepository)
         attendanceRepository = MockAttendanceRepository()
@@ -79,6 +82,7 @@ class AttendanceUnificationComprehensiveTest {
 
     @After
     fun tearDown() {
+        com.example.data.SupabaseClientProvider.mockTeacherId = null
         Dispatchers.resetMain()
     }
 
@@ -365,12 +369,24 @@ class AttendanceUnificationComprehensiveTest {
             groupId = "group_B"
         )
 
+        val groupRepository = MockGroupRepository(
+            initialGroups = listOf(
+                com.example.core.model.Group(id = "group_A", teacherId = "teacher_test", gradeId = targetGrade.id, name = "مجموعة أ", startTime = "10:00", endTime = "11:00"),
+                com.example.core.model.Group(id = "group_B", teacherId = "teacher_test", gradeId = targetGrade.id, name = "مجموعة ب", startTime = "11:00", endTime = "12:00")
+            )
+        )
+        val teacherRepository = MockTeacherRepository(
+            initialTeacher = com.example.core.model.Teacher(id = "teacher_test", email = "test@teacher.com", fullName = "مدرس تجريبي")
+        )
+
         // Open fast attendance for group_A
         val fastAttendanceVM = FastAttendanceViewModel(
             studentRepository = studentRepository,
             gradeRepository = gradeRepository,
             attendanceRepository = attendanceRepository,
-            paymentRepository = paymentRepository
+            paymentRepository = paymentRepository,
+            groupRepository = groupRepository,
+            teacherRepository = teacherRepository
         )
         advanceUntilIdle()
 
@@ -380,12 +396,13 @@ class AttendanceUnificationComprehensiveTest {
 
         // Scan guest student into group_A
         fastAttendanceVM.processScannedBarcode("ST-GUEST")
+        val stateImmediate = fastAttendanceVM.uiState.value
+        assertEquals(ScanResultType.SUCCESS_PRESENT, stateImmediate.scanFeedback?.type)
         advanceUntilIdle()
 
         val state = fastAttendanceVM.uiState.value
         // Guest is accepted into current session
         assertTrue(state.presentStudentIds.contains("std_guest"))
         assertTrue(state.extraSessionStudents.any { it.studentId == "std_guest" })
-        assertEquals(ScanResultType.SUCCESS_PRESENT, state.scanFeedback?.type)
     }
 }

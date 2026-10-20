@@ -97,7 +97,9 @@ class MoreViewModelTest {
         viewModel = MoreViewModel(
             settingsRepository = settingsRepository,
             gradeRepository = gradeRepository,
-            teacherRepository = teacherRepository
+            teacherRepository = teacherRepository,
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false
         )
     }
 
@@ -217,6 +219,8 @@ class MoreViewModelTest {
             settingsRepository = settingsRepository,
             gradeRepository = gradeRepository,
             teacherRepository = teacherRepository,
+            ioDispatcher = testDispatcher,
+            runInitialCheck = false,
             edgeFunctionUrl = testUrl
         )
         assertNotNull(customVm)

@@ -5,11 +5,12 @@ import com.example.data.repository.*
 import com.example.ui.start_lesson.StartLessonViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -22,7 +23,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class StartLessonViewModelDuplicationTest {
 
-    private val testDispatcher = UnconfinedTestDispatcher()
+    private val testDispatcher = StandardTestDispatcher()
 
     @Before
     fun setup() {
@@ -46,15 +47,20 @@ class StartLessonViewModelDuplicationTest {
             paymentRepository = MockPaymentRepository(),
             notificationEventRepository = NotificationEventRepositoryMock()
         )
+        testDispatcher.scheduler.advanceUntilIdle()
 
         viewModel.finishLesson()
         
-        // Assert saving state
+        // Assert saving state while background coroutine is pending
         assertTrue(viewModel.uiState.value.isSaving)
         
         // Assert that a second call while saving does nothing or is ignored
         viewModel.finishLesson()
-        // If it was already saving, the second call returns early, isSaving should remain true
         assertTrue(viewModel.uiState.value.isSaving)
+
+        // Advance to let saving finish
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isSaving)
+        assertTrue(viewModel.uiState.value.isFinished)
     }
 }
