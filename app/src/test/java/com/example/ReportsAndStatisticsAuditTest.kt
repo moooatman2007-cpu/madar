@@ -101,6 +101,7 @@ class ReportsAndStatisticsAuditTest {
             teacherRepository = teacherRepository
         )
         testDispatcher.scheduler.advanceUntilIdle()
+        reportsViewModel.setDateRange(java.time.LocalDate.of(2026, 9, 1), java.time.LocalDate.of(2026, 9, 30))
         reportsViewModel.selectTab(com.example.ui.reports.ReportsTab.STUDENT)
         reportsViewModel.selectStudent(student.studentId)
         testDispatcher.scheduler.advanceUntilIdle()

@@ -22,7 +22,7 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE teacher_id = :teacherId AND student_id = :studentId AND date = :date LIMIT 1")
     suspend fun getAttendanceByDateSync(teacherId: String, studentId: String, date: String): AttendanceEntity?
 
-    @Query("SELECT * FROM attendance WHERE teacher_id = :teacherId AND date = :date AND (:groupId IS NULL AND group_id IS NULL OR group_id = :groupId)")
+    @Query("SELECT * FROM attendance WHERE teacher_id = :teacherId AND date = :date AND (:groupId IS NULL OR group_id = :groupId OR group_id IS NULL)")
     suspend fun getAttendanceByDateAndGroupSync(teacherId: String, date: String, groupId: String?): List<AttendanceEntity>
 
     @Query("SELECT * FROM attendance WHERE teacher_id = :teacherId AND date = :date")

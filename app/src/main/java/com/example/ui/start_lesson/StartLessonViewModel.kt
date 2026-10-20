@@ -150,6 +150,12 @@ data class StartLessonUiState(
     val selectedGradeName: String = "",
     val studentsInGroup: List<Student> = emptyList(),
     val presentStudentIds: Set<String> = emptySet(),
+    val absentStudentIds: Set<String> = emptySet(),
+    val lateStudentIds: Set<String> = emptySet(),
+    val excusedStudentIds: Set<String> = emptySet(),
+    val attendanceStatusMap: Map<String, AttendanceStatus> = emptyMap(),
+    val isLoadingAttendance: Boolean = false,
+    val statusChangeMessage: String? = null,
     val currentDate: String = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")),
     val currentYear: Int = LocalDate.now().year,
     val currentMonth: Int = LocalDate.now().monthValue,
@@ -260,6 +266,43 @@ class StartLessonViewModel(
                 examsMap = exMap
             )
         }
+        loadExistingAttendanceForGrade(gradeId)
+    }
+
+    fun loadExistingAttendanceForGrade(gradeId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingAttendance = true) }
+            try {
+                val state = _uiState.value
+                val date = state.currentDate
+                val records = attendanceRepository.getAttendanceForDateAndGroup(date, null)
+                val gradeStudentIds = allStudentsList.filter { it.gradeId == gradeId }.map { it.studentId }.toSet()
+                val relevantRecords = records.filter { gradeStudentIds.contains(it.studentId) }
+
+                val loadedPresent = relevantRecords.filter { it.status == AttendanceStatus.PRESENT || it.status == AttendanceStatus.LATE }
+                    .map { it.studentId }.toSet()
+                val loadedAbsent = relevantRecords.filter { it.status == AttendanceStatus.ABSENT }
+                    .map { it.studentId }.toSet()
+                val loadedLate = relevantRecords.filter { it.status == AttendanceStatus.LATE }
+                    .map { it.studentId }.toSet()
+                val loadedExcused = relevantRecords.filter { it.status == AttendanceStatus.EXCUSED }
+                    .map { it.studentId }.toSet()
+                val statusMap = relevantRecords.associate { it.studentId to it.status }
+
+                _uiState.update { currentState ->
+                    currentState.copy(
+                        presentStudentIds = loadedPresent,
+                        absentStudentIds = loadedAbsent,
+                        lateStudentIds = loadedLate,
+                        excusedStudentIds = loadedExcused,
+                        attendanceStatusMap = statusMap,
+                        isLoadingAttendance = false
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoadingAttendance = false) }
+            }
+        }
     }
 
     fun goToStep(step: StartLessonStep) {
@@ -267,11 +310,58 @@ class StartLessonViewModel(
     }
 
     fun toggleStudentPresent(studentId: String) {
+        val student = allStudentsList.find { it.studentId == studentId }
+        val studentName = student?.fullName ?: "الطالب"
         _uiState.update { state ->
             val set = state.presentStudentIds.toMutableSet()
-            if (set.contains(studentId)) set.remove(studentId) else set.add(studentId)
-            state.copy(presentStudentIds = set)
+            val absentSet = state.absentStudentIds.toMutableSet()
+            val statusMap = state.attendanceStatusMap.toMutableMap()
+            val msg: String
+
+            if (set.contains(studentId)) {
+                set.remove(studentId)
+                absentSet.add(studentId)
+                statusMap[studentId] = AttendanceStatus.ABSENT
+                msg = "تم تسجيل $studentName غائبًا"
+            } else {
+                set.add(studentId)
+                absentSet.remove(studentId)
+                statusMap[studentId] = AttendanceStatus.PRESENT
+                msg = "تم تسجيل حضور $studentName ✓"
+            }
+            state.copy(
+                presentStudentIds = set,
+                absentStudentIds = absentSet,
+                attendanceStatusMap = statusMap,
+                statusChangeMessage = msg
+            )
         }
+    }
+
+    fun changeAbsentToPresent(studentId: String) {
+        val student = allStudentsList.find { it.studentId == studentId }
+        val studentName = student?.fullName ?: "الطالب"
+        _uiState.update { state ->
+            val updatedPresent = state.presentStudentIds + studentId
+            val updatedAbsent = state.absentStudentIds - studentId
+            val updatedStatusMap = state.attendanceStatusMap + (studentId to AttendanceStatus.PRESENT)
+            val updatedRecent = if (student != null) {
+                (listOf(student) + state.recentScannedStudents.filter { it.studentId != studentId }).take(5)
+            } else state.recentScannedStudents
+
+            state.copy(
+                presentStudentIds = updatedPresent,
+                absentStudentIds = updatedAbsent,
+                attendanceStatusMap = updatedStatusMap,
+                recentScannedStudents = updatedRecent,
+                scanFeedback = if (student != null) ScanFeedback(student, ScanResultType.SUCCESS_PRESENT, student.studentCode) else null,
+                statusChangeMessage = "تم تعديل حالة $studentName من غائب إلى حاضر بنجاح ✓"
+            )
+        }
+    }
+
+    fun clearStatusChangeMessage() {
+        _uiState.update { it.copy(statusChangeMessage = null) }
     }
 
     fun togglePaymentStatus(studentId: String) {
@@ -305,14 +395,27 @@ class StartLessonViewModel(
             _uiState.update { it.copy(scanFeedback = ScanFeedback(student, ScanResultType.ALREADY_PRESENT, trimmed)) }
             return
         }
+        if (state.absentStudentIds.contains(student.studentId) || 
+            state.attendanceStatusMap[student.studentId] == AttendanceStatus.ABSENT) {
+            if (state.scanFeedback?.type == ScanResultType.ALREADY_ABSENT && state.scanFeedback.student?.studentId == student.studentId) {
+                changeAbsentToPresent(student.studentId)
+                return
+            }
+            _uiState.update { it.copy(scanFeedback = ScanFeedback(student, ScanResultType.ALREADY_ABSENT, trimmed)) }
+            return
+        }
 
         val updatedPresent = state.presentStudentIds + student.studentId
+        val updatedAbsent = state.absentStudentIds - student.studentId
         val updatedRecent = (listOf(student) + state.recentScannedStudents.filter { it.studentId != student.studentId }).take(5)
+        val updatedStatusMap = state.attendanceStatusMap + (student.studentId to AttendanceStatus.PRESENT)
 
         _uiState.update {
             it.copy(
                 presentStudentIds = updatedPresent,
+                absentStudentIds = updatedAbsent,
                 recentScannedStudents = updatedRecent,
+                attendanceStatusMap = updatedStatusMap,
                 scanFeedback = ScanFeedback(student, ScanResultType.SUCCESS_PRESENT, trimmed)
             )
         }
@@ -429,7 +532,7 @@ class StartLessonViewModel(
             try {
                 val date = state.currentDate
                 val students = state.studentsInGroup
-                val groupId = state.selectedGradeId
+                val groupId: String? = null
 
                 // Identify students who are absent
                 val absentStudentIds = students
@@ -444,6 +547,14 @@ class StartLessonViewModel(
                 }
                 val attResult = attendanceRepository.recordBatchAttendance(date, attRecords, groupId)
                 val isAttendanceCloudConfirmed = attResult.isSuccess && attResult.getOrNull()?.syncStatus == BatchSyncStatus.SAVED_TO_CLOUD
+
+                val newStatusMap = attRecords.associate { it.studentId to AttendanceStatus.fromString(it.status) }
+                _uiState.update {
+                    it.copy(
+                        absentStudentIds = absentStudentIds,
+                        attendanceStatusMap = it.attendanceStatusMap + newStatusMap
+                    )
+                }
 
                 // 1.1 Match and collect Attendance Absence Source IDs
                 val absenceItems = mutableListOf<LessonSavedItem>()

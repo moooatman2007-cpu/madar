@@ -143,8 +143,11 @@ class FastAttendancePersistenceTest {
         // ST-00011 should already be loaded as present
         assertTrue(viewModel2.uiState.value.presentStudentIds.contains("std_00011"))
 
-        // Now scan late student ST-00004
+        // Now scan late student ST-00004 (which is absent) and explicitly convert to present
         viewModel2.processScannedBarcode("ST-00004")
+        advanceUntilIdle()
+        val st04Student = students.find { it.studentCode == "ST-00004" }!!
+        viewModel2.changeAbsentToPresent(st04Student.studentId)
         advanceUntilIdle()
 
         viewModel2.finishAttendance()
@@ -186,8 +189,11 @@ class FastAttendancePersistenceTest {
         viewModel.onGradeSelected(targetGrade.id)
         advanceUntilIdle()
 
-        // Scan ST-00004
+        // Scan ST-00004 (which is absent) and explicitly convert to present
         viewModel.processScannedBarcode("ST-00004")
+        advanceUntilIdle()
+        val st04Student = students.find { it.studentCode == "ST-00004" }!!
+        viewModel.changeAbsentToPresent(st04Student.studentId)
         advanceUntilIdle()
 
         viewModel.finishAttendance()

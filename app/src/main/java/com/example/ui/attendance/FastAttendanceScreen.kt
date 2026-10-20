@@ -29,7 +29,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
+import com.example.core.model.AttendanceStatus
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -527,6 +529,7 @@ fun FastAttendanceScreen(
                         val colorScheme = when (feedback.type) {
                             ScanResultType.SUCCESS_PRESENT -> EmeraldGreen to EmeraldGreenLight
                             ScanResultType.ALREADY_PRESENT -> Color(0xFFF57F17) to Color(0xFFFFF8E1)
+                            ScanResultType.ALREADY_ABSENT -> DangerRed to DangerRedLight
                             ScanResultType.NOT_FOUND -> DangerRed to DangerRedLight
                             ScanResultType.WRONG_GROUP -> Color(0xFFE65100) to Color(0xFFFFF3E0)
                         }
@@ -557,6 +560,7 @@ fun FastAttendanceScreen(
                                         imageVector = when (feedback.type) {
                                             ScanResultType.SUCCESS_PRESENT -> Icons.Default.CheckCircle
                                             ScanResultType.ALREADY_PRESENT -> Icons.Default.CheckCircle
+                                            ScanResultType.ALREADY_ABSENT -> Icons.Default.Clear
                                             ScanResultType.NOT_FOUND -> Icons.Default.Clear
                                             ScanResultType.WRONG_GROUP -> Icons.Default.Clear
                                         },
@@ -575,6 +579,7 @@ fun FastAttendanceScreen(
                                         text = when (feedback.type) {
                                             ScanResultType.SUCCESS_PRESENT -> "تم تسجيل الحضور ✓"
                                             ScanResultType.ALREADY_PRESENT -> "مسجل مسبقاً ✓"
+                                            ScanResultType.ALREADY_ABSENT -> "مسجل غائب بالفعل ⚠️"
                                             ScanResultType.NOT_FOUND -> "كود غير معروف ❌"
                                             ScanResultType.WRONG_GROUP -> "الطالب غير موجود في هذه المجموعة."
                                         },
@@ -588,6 +593,21 @@ fun FastAttendanceScreen(
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
+
+                                        if (feedback.type == ScanResultType.ALREADY_ABSENT) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Button(
+                                                onClick = { viewModel.changeAbsentToPresent(feedback.student.studentId) },
+                                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(34.dp)
+                                            ) {
+                                                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("تحويل إلى حاضر ✓", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                                            }
+                                        }
                                     } else if (feedback.type == ScanResultType.NOT_FOUND) {
                                         Text(
                                             text = "الكود: ${feedback.rawCode}",
@@ -755,6 +775,8 @@ fun FastAttendanceScreen(
                         key = { it.studentId }
                     ) { student ->
                         val isPresent = uiState.presentStudentIds.contains(student.studentId)
+                        val isExplicitlyAbsent = uiState.absentStudentIds.contains(student.studentId) || 
+                            uiState.attendanceStatusMap[student.studentId] == AttendanceStatus.ABSENT
                         val isPaid = uiState.paymentsMap[student.studentId]?.isPaid ?: false
                         val gradeName = gradeMap[student.gradeId] ?: ""
                         val isGuest = uiState.selectedGroupId != null && student.groupId != uiState.selectedGroupId
@@ -763,6 +785,8 @@ fun FastAttendanceScreen(
                             student = student,
                             gradeName = gradeName,
                             isPresent = isPresent,
+                            isExplicitlyAbsent = isExplicitlyAbsent,
+                            attendanceStatus = uiState.attendanceStatusMap[student.studentId],
                             isPaid = isPaid,
                             isGuest = isGuest,
                             onToggle = { viewModel.toggleStudentPresent(student.studentId) },
@@ -874,116 +898,149 @@ private fun FastAttendanceStudentRow(
     student: Student,
     gradeName: String,
     isPresent: Boolean,
+    isExplicitlyAbsent: Boolean = false,
+    attendanceStatus: AttendanceStatus? = null,
     isPaid: Boolean,
     isGuest: Boolean = false,
     onToggle: () -> Unit,
     onTogglePayment: () -> Unit
 ) {
+    val cardBg = when {
+        isPresent -> EmeraldGreenLight.copy(alpha = 0.5f)
+        isExplicitlyAbsent -> DangerRedLight.copy(alpha = 0.35f)
+        else -> MaterialTheme.colorScheme.surface
+    }
+
     Card(
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isPresent) EmeraldGreenLight.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
-        ),
+        colors = CardDefaults.cardColors(containerColor = cardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle() }
             .testTag("fast_attendance_student_row_${student.studentId}")
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = Dimens.Spacing16, vertical = Dimens.Spacing12),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Selection Circle Checkmark Button
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(if (isPresent) EmeraldGreen else MaterialTheme.colorScheme.surfaceVariant)
-                        .border(
-                            width = 1.dp,
-                            color = if (isPresent) EmeraldGreen else MaterialTheme.colorScheme.outline,
-                            shape = CircleShape
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    if (isPresent) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "حاضر",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(Dimens.Spacing12))
-
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = student.fullName,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (isGuest) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = WarmAmberLight,
-                                contentColor = WarmAmber
-                            ) {
-                                Text(
-                                    text = "ضيف",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (student.studentCode.isNotBlank()) {
-                            Text(
-                                text = "كود: ${student.studentCode}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    // Selection Circle Checkmark Button
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    isPresent -> EmeraldGreen
+                                    isExplicitlyAbsent -> DangerRed
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                }
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = when {
+                                    isPresent -> EmeraldGreen
+                                    isExplicitlyAbsent -> DangerRed
+                                    else -> MaterialTheme.colorScheme.outline
+                                },
+                                shape = CircleShape
+                            )
+                    ) {
+                        if (isPresent) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "حاضر",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        } else if (isExplicitlyAbsent) {
+                            Icon(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = "مسجل غائب",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                        if (gradeName.isNotBlank()) {
+                    }
+
+                    Spacer(modifier = Modifier.width(Dimens.Spacing12))
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = student.fullName,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (isGuest) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = WarmAmberLight,
+                                    contentColor = WarmAmber
+                                ) {
+                                    Text(
+                                        text = "ضيف",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             if (student.studentCode.isNotBlank()) {
                                 Text(
-                                    text = " • ",
+                                    text = "كود: ${student.studentCode}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Text(
-                                text = gradeName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = PrimaryIndigo
-                            )
+                            if (gradeName.isNotBlank()) {
+                                if (student.studentCode.isNotBlank()) {
+                                    Text(
+                                        text = " • ",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = gradeName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = PrimaryIndigo,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(Dimens.Spacing8))
+                Spacer(modifier = Modifier.width(8.dp))
 
-            // Action & Status Chips
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Dimens.Spacing6)
-            ) {
                 // Payment Status Chip (Clickable)
                 Surface(
                     shape = RoundedCornerShape(8.dp),
@@ -1004,17 +1061,30 @@ private fun FastAttendanceStudentRow(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
+            }
 
-                // Attendance Status Chip
+            // Attendance Status Chip
+            val (chipText, chipColor, chipTextColor) = when {
+                isPresent -> Triple("حاضر ✓", EmeraldGreen, Color.White)
+                isExplicitlyAbsent -> Triple("مسجل غائب بالفعل ⚠️", DangerRedLight, DangerRed)
+                attendanceStatus == AttendanceStatus.LATE -> Triple("متأخر ⏱️", WarmAmber, Color.White)
+                attendanceStatus == AttendanceStatus.EXCUSED -> Triple("غياب بعذر 📋", Color(0xFF1E88E5), Color.White)
+                else -> Triple("لم يُسجل بعد", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start
+            ) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = if (isPresent) EmeraldGreen else MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = chipColor,
+                    contentColor = chipTextColor
                 ) {
                     Text(
-                        text = if (isPresent) "حاضر ✓" else "غياب متوقع",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        text = chipText,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
             }

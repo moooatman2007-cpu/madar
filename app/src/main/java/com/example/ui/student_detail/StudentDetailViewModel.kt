@@ -155,6 +155,7 @@ class StudentDetailViewModel(
 
     private var loadStudentJob: Job? = null
     private var refreshJob: Job? = null
+    private var globalDataJob: Job? = null
 
     init {
         updateMonthName()
@@ -263,7 +264,9 @@ class StudentDetailViewModel(
                 }
                 
                 // Load global data for overview and populate monthly slices locally from Room cache
-                viewModelScope.launch {
+                globalDataJob?.cancel()
+                var isInitialLoad = true
+                globalDataJob = launch {
                     combine(
                         attendanceRepository.getAttendanceForStudent(studentId),
                         recitationRepository.getRecitationsForStudent(studentId),
@@ -291,21 +294,55 @@ class StudentDetailViewModel(
                             sortedHw = sortedHw
                         )
                     }.collectLatest { data ->
+                        if (studentId != _uiState.value.student?.studentId) return@collectLatest
+
+                        val allAtt = data.sortedAtt
+                        val allRec = data.sortedRec
+                        val allEx = data.sortedEx
+                        val allHw = data.sortedHw
+
+                        val allDates = (allAtt.map { it.date } + allRec.map { it.date } + allEx.map { it.date } + allHw.map { it.date }).filter { it.length >= 7 }
+                        val latestDate = allDates.maxOrNull()
+                        var targetYear = _uiState.value.selectedYear
+                        var targetMonth = _uiState.value.selectedMonth
+                        if (latestDate != null) {
+                            val curPeriod = String.format(Locale.US, "%04d-%02d", targetYear, targetMonth)
+                            val hasDataInCurrent = allAtt.any { it.date.startsWith(curPeriod) } ||
+                                    allRec.any { it.date.startsWith(curPeriod) } ||
+                                    allEx.any { it.date.startsWith(curPeriod) } ||
+                                    allHw.any { it.date.startsWith(curPeriod) }
+                            if (!hasDataInCurrent) {
+                                try {
+                                    val parts = latestDate.split("-")
+                                    if (parts.size >= 2) {
+                                        targetYear = parts[0].toInt()
+                                        targetMonth = parts[1].toInt()
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+
                         _uiState.update { 
                             it.copy(
-                                globalAttendances = data.sortedAtt,
+                                selectedYear = targetYear,
+                                selectedMonth = targetMonth,
+                                globalAttendances = allAtt,
                                 globalAttendanceSummary = data.attendanceSummary,
-                                globalRecitations = data.sortedRec,
-                                globalExams = data.sortedEx,
-                                globalHomeworks = data.sortedHw
+                                globalRecitations = allRec,
+                                globalExams = allEx,
+                                globalHomeworks = allHw
                             )
                         }
+                        updateMonthName()
                         updateMonthlySlices()
+
+                        if (isInitialLoad) {
+                            _uiState.update { it.copy(isLoading = false) }
+                            refreshCurrentTabData()
+                            isInitialLoad = false
+                        }
                     }
                 }
-
-                _uiState.update { it.copy(isLoading = false) }
-                refreshCurrentTabData()
             } else {
                 _uiState.update {
                     it.copy(
@@ -325,73 +362,67 @@ class StudentDetailViewModel(
         val globalEx = _uiState.value.globalExams
         val globalHw = _uiState.value.globalHomeworks
 
-        viewModelScope.launch {
-            val updateBlock = withContext(Dispatchers.Default) {
-                val dateRange = DateUtils.getMonthDateRange(year, month)
-                val startDate = dateRange.startDate
-                val endDate = dateRange.endDate
+        val dateRange = DateUtils.getMonthDateRange(year, month)
+        val startDate = dateRange.startDate
+        val endDate = dateRange.endDate
 
-                val monthlyAtt = globalAtt.filter { it.date >= startDate && it.date <= endDate }
-                val attSummary = AttendanceSummary(
-                    totalDays = monthlyAtt.size,
-                    presentCount = monthlyAtt.count { it.status == AttendanceStatus.PRESENT },
-                    absentCount = monthlyAtt.count { it.status == AttendanceStatus.ABSENT },
-                    lateCount = monthlyAtt.count { it.status == AttendanceStatus.LATE },
-                    excusedCount = monthlyAtt.count { it.status == AttendanceStatus.EXCUSED },
-                    attendanceRate = if (monthlyAtt.isNotEmpty()) (monthlyAtt.count { it.status == AttendanceStatus.PRESENT }.toFloat() / monthlyAtt.size) * 100f else 0f
-                )
+        val monthlyAtt = globalAtt.filter { it.date >= startDate && it.date <= endDate }
+        val attSummary = AttendanceSummary(
+            totalDays = monthlyAtt.size,
+            presentCount = monthlyAtt.count { it.status == AttendanceStatus.PRESENT },
+            absentCount = monthlyAtt.count { it.status == AttendanceStatus.ABSENT },
+            lateCount = monthlyAtt.count { it.status == AttendanceStatus.LATE },
+            excusedCount = monthlyAtt.count { it.status == AttendanceStatus.EXCUSED },
+            attendanceRate = if (monthlyAtt.isNotEmpty()) (monthlyAtt.count { it.status == AttendanceStatus.PRESENT }.toFloat() / monthlyAtt.size) * 100f else 0f
+        )
 
-                val monthlyRec = globalRec.filter { it.date >= startDate && it.date <= endDate }
-                val recSummary = if (monthlyRec.isEmpty()) {
-                    RecitationSummary()
-                } else {
-                    val totalCount = monthlyRec.size
-                    val avgScore = monthlyRec.map { it.score }.average()
-                    val avgMaxScore = monthlyRec.map { it.maxScore }.average()
-                    val avgPct = monthlyRec.map { (it.score / it.maxScore) * 100.0 }.average().toFloat()
-                    RecitationSummary(
-                        totalCount = totalCount,
-                        averageScore = avgScore,
-                        averageMaxScore = avgMaxScore,
-                        averagePercentage = avgPct
-                    )
-                }
+        val monthlyRec = globalRec.filter { it.date >= startDate && it.date <= endDate }
+        val recSummary = if (monthlyRec.isEmpty()) {
+            RecitationSummary()
+        } else {
+            val totalCount = monthlyRec.size
+            val avgScore = monthlyRec.map { it.score }.average()
+            val avgMaxScore = monthlyRec.map { it.maxScore }.average()
+            val avgPct = monthlyRec.map { (it.score / it.maxScore) * 100.0 }.average().toFloat()
+            RecitationSummary(
+                totalCount = totalCount,
+                averageScore = avgScore,
+                averageMaxScore = avgMaxScore,
+                averagePercentage = avgPct
+            )
+        }
 
-                val monthlyEx = globalEx.filter { it.date >= startDate && it.date <= endDate }
-                val exSummary = if (monthlyEx.isEmpty()) {
-                    ExamSummary()
-                } else {
-                    val totalCount = monthlyEx.size
-                    val avgScore = monthlyEx.map { it.score }.average()
-                    val percentages = monthlyEx.map { (it.score / it.maxScore) * 100.0 }
-                    val avgPct = percentages.average().toFloat()
-                    val highestPct = percentages.maxOrNull()?.toFloat() ?: 0f
-                    val lowestPct = percentages.minOrNull()?.toFloat() ?: 0f
-                    ExamSummary(
-                        totalCount = totalCount,
-                        averageScore = avgScore,
-                        averagePercentage = avgPct,
-                        highestPercentage = highestPct,
-                        lowestPercentage = lowestPct
-                    )
-                }
+        val monthlyEx = globalEx.filter { it.date >= startDate && it.date <= endDate }
+        val exSummary = if (monthlyEx.isEmpty()) {
+            ExamSummary()
+        } else {
+            val totalCount = monthlyEx.size
+            val avgScore = monthlyEx.map { it.score }.average()
+            val percentages = monthlyEx.map { (it.score / it.maxScore) * 100.0 }
+            val avgPct = percentages.average().toFloat()
+            val highestPct = percentages.maxOrNull()?.toFloat() ?: 0f
+            val lowestPct = percentages.minOrNull()?.toFloat() ?: 0f
+            ExamSummary(
+                totalCount = totalCount,
+                averageScore = avgScore,
+                averagePercentage = avgPct,
+                highestPercentage = highestPct,
+                lowestPercentage = lowestPct
+            )
+        }
 
-                val monthlyHw = globalHw.filter { it.date >= startDate && it.date <= endDate }
+        val monthlyHw = globalHw.filter { it.date >= startDate && it.date <= endDate }
 
-                val updater: (StudentDetailUiState) -> StudentDetailUiState = { state ->
-                    state.copy(
-                        attendances = monthlyAtt,
-                        attendanceSummary = attSummary,
-                        recitations = monthlyRec,
-                        recitationSummary = recSummary,
-                        exams = monthlyEx,
-                        examSummary = exSummary,
-                        homeworks = monthlyHw
-                    )
-                }
-                updater
-            }
-            _uiState.update { updateBlock(it) }
+        _uiState.update { state ->
+            state.copy(
+                attendances = monthlyAtt,
+                attendanceSummary = attSummary,
+                recitations = monthlyRec,
+                recitationSummary = recSummary,
+                exams = monthlyEx,
+                examSummary = exSummary,
+                homeworks = monthlyHw
+            )
         }
     }
 

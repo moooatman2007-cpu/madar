@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.example.core.model.AttendanceStatus
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -460,6 +461,7 @@ fun StepAttendanceContent(uiState: StartLessonUiState, viewModel: StartLessonVie
                             containerColor = when (feedback.type) {
                                 ScanResultType.SUCCESS_PRESENT -> EmeraldGreenLight
                                 ScanResultType.ALREADY_PRESENT -> Color(0xFFFFF8E1)
+                                ScanResultType.ALREADY_ABSENT -> DangerRedLight
                                 ScanResultType.NOT_FOUND -> DangerRedLight
                                 ScanResultType.WRONG_GROUP -> Color(0xFFFFF3E0)
                             }
@@ -473,15 +475,30 @@ fun StepAttendanceContent(uiState: StartLessonUiState, viewModel: StartLessonVie
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = when (feedback.type) {
-                                    ScanResultType.SUCCESS_PRESENT -> "${feedback.student?.fullName} ✓ حاضر"
-                                    ScanResultType.ALREADY_PRESENT -> "⚠️ تم تسجيل حضوره مسبقاً"
-                                    ScanResultType.NOT_FOUND -> "❌ طالب غير مسجل (${feedback.rawCode})"
-                                    ScanResultType.WRONG_GROUP -> "⚠️ الطالب ينتمي لمجموعة أخرى"
-                                },
-                                fontWeight = FontWeight.Bold
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = when (feedback.type) {
+                                        ScanResultType.SUCCESS_PRESENT -> "${feedback.student?.fullName} ✓ حاضر"
+                                        ScanResultType.ALREADY_PRESENT -> "⚠️ تم تسجيل حضوره مسبقاً"
+                                        ScanResultType.ALREADY_ABSENT -> "⚠️ ${feedback.student?.fullName ?: "الطالب"} مسجل غائب بالفعل"
+                                        ScanResultType.NOT_FOUND -> "❌ طالب غير مسجل (${feedback.rawCode})"
+                                        ScanResultType.WRONG_GROUP -> "⚠️ الطالب ينتمي لمجموعة أخرى"
+                                    },
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (feedback.type == ScanResultType.ALREADY_ABSENT && feedback.student != null) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Button(
+                                        onClick = { viewModel.changeAbsentToPresent(feedback.student.studentId) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("تحويل إلى حاضر ✓", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                                    }
+                                }
+                            }
                             IconButton(onClick = viewModel::clearScanFeedback) {
                                 Icon(imageVector = Icons.Default.Clear, contentDescription = null)
                             }
@@ -496,12 +513,18 @@ fun StepAttendanceContent(uiState: StartLessonUiState, viewModel: StartLessonVie
             ) {
                 items(uiState.studentsInGroup, key = { it.studentId }) { student ->
                     val isPresent = uiState.presentStudentIds.contains(student.studentId)
+                    val isExplicitlyAbsent = uiState.absentStudentIds.contains(student.studentId) || 
+                        uiState.attendanceStatusMap[student.studentId] == AttendanceStatus.ABSENT
                     val isPaid = uiState.paymentsMap[student.studentId]?.isPaid ?: false
 
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isPresent) EmeraldGreenLight.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
+                            containerColor = when {
+                                isPresent -> EmeraldGreenLight.copy(alpha = 0.4f)
+                                isExplicitlyAbsent -> DangerRedLight.copy(alpha = 0.35f)
+                                else -> MaterialTheme.colorScheme.surface
+                            }
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -520,13 +543,38 @@ fun StepAttendanceContent(uiState: StartLessonUiState, viewModel: StartLessonVie
                                     modifier = Modifier
                                         .size(32.dp)
                                         .clip(CircleShape)
-                                        .background(if (isPresent) EmeraldGreen else MaterialTheme.colorScheme.surfaceVariant)
+                                        .background(
+                                            when {
+                                                isPresent -> EmeraldGreen
+                                                isExplicitlyAbsent -> DangerRed
+                                                else -> MaterialTheme.colorScheme.surfaceVariant
+                                            }
+                                        )
                                 ) {
-                                    if (isPresent) Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White)
+                                    if (isPresent) {
+                                        Icon(imageVector = Icons.Default.Check, contentDescription = "حاضر", tint = Color.White)
+                                    } else if (isExplicitlyAbsent) {
+                                        Icon(imageVector = Icons.Default.Clear, contentDescription = "مسجل غائب", tint = Color.White)
+                                    }
                                 }
                                 Column {
                                     Text(text = student.fullName, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-                                    Text(text = "كود: ${student.studentCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(text = "كود: ${student.studentCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (isExplicitlyAbsent && !isPresent) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = DangerRedLight,
+                                                contentColor = DangerRed
+                                            ) {
+                                                Text(
+                                                    text = "مسجل غائب بالفعل ⚠️",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
 

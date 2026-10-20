@@ -97,7 +97,7 @@ class StudentListViewModel(
 
         viewModelScope.launch {
             combine(
-                _searchQuery.debounce(100),
+                _searchQuery,
                 _selectedGradeId,
                 studentRepository.getStudents()
             ) { query, gradeId, allStudents ->
@@ -111,7 +111,7 @@ class StudentListViewModel(
                             student.parentPhone.contains(q)
                     matchesGrade && matchesQuery
                 }
-            }.flowOn(Dispatchers.Default)
+            }
             .collect { studentsList ->
                 _uiState.update {
                     it.copy(

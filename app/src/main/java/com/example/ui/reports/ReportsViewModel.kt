@@ -729,8 +729,7 @@ class ReportsViewModel(
                 state.copy(isSendingNotification = isSending)
             }.combine(_notificationMessage) { state, msg ->
                 state.copy(notificationMessage = msg)
-            }.flowOn(Dispatchers.Default)
-            .collect { newState ->
+            }.collect { newState ->
                 _uiState.value = newState
             }
         }

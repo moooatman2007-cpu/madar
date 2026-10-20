@@ -74,7 +74,7 @@ class ReportsNotificationWorkerRetryTest {
             return creationResultBuilder(event)
         }
 
-        override suspend fun triggerNotificationWorker(): NotificationWorkerResult {
+        override suspend fun triggerNotificationWorker(eventType: String?): NotificationWorkerResult {
             workerTriggerCount.incrementAndGet()
             return workerResultBuilder()
         }

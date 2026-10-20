@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference
 enum class ScanResultType {
     SUCCESS_PRESENT,
     ALREADY_PRESENT,
+    ALREADY_ABSENT,
     NOT_FOUND,
     WRONG_GROUP
 }
@@ -63,6 +64,10 @@ data class FastAttendanceUiState(
     val allStudentsInScope: List<Student> = emptyList(),
     val filteredStudents: List<Student> = emptyList(),
     val presentStudentIds: Set<String> = emptySet(),
+    val absentStudentIds: Set<String> = emptySet(),
+    val lateStudentIds: Set<String> = emptySet(),
+    val excusedStudentIds: Set<String> = emptySet(),
+    val attendanceStatusMap: Map<String, AttendanceStatus> = emptyMap(),
     val currentDate: String = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")),
     val currentYear: Int = LocalDate.now().year,
     val currentMonth: Int = LocalDate.now().monthValue,
@@ -75,7 +80,9 @@ data class FastAttendanceUiState(
     val isScannerActive: Boolean = false,
     val scanFeedback: ScanFeedback? = null,
     val recentScannedStudents: List<Student> = emptyList(),
-    val isAddStudentDialogOpen: Boolean = false
+    val isAddStudentDialogOpen: Boolean = false,
+    val isLoadingAttendance: Boolean = false,
+    val statusChangeMessage: String? = null
 )
 
 class FastAttendanceViewModel(
@@ -107,24 +114,39 @@ class FastAttendanceViewModel(
             val state = _uiState.value
             val date = state.currentDate
             val groupId = state.selectedGroupId
+            _uiState.update { it.copy(isLoadingAttendance = true) }
             try {
                 val records = attendanceRepository.getAttendanceForDateAndGroup(date, groupId)
                 val loadedPresent = records.filter { it.status == AttendanceStatus.PRESENT || it.status == AttendanceStatus.LATE }
                     .map { it.studentId }
                     .toSet()
+                val loadedAbsent = records.filter { it.status == AttendanceStatus.ABSENT }
+                    .map { it.studentId }
+                    .toSet()
+                val loadedLate = records.filter { it.status == AttendanceStatus.LATE }
+                    .map { it.studentId }
+                    .toSet()
+                val loadedExcused = records.filter { it.status == AttendanceStatus.EXCUSED }
+                    .map { it.studentId }
+                    .toSet()
+                val statusMap = records.associate { it.studentId to it.status }
 
                 val allScopeIds = state.allStudentsInScope.map { it.studentId }.toSet()
                 val extraFromDb = records.filter { !allScopeIds.contains(it.studentId) }
                     .mapNotNull { rec -> allStudentsList.find { it.studentId == rec.studentId } }
 
                 _uiState.update { currentState ->
-                    val combinedPresent = currentState.presentStudentIds + loadedPresent
                     val combinedExtra = (currentState.extraSessionStudents + extraFromDb).distinctBy { it.studentId }
                     val combinedScope = (currentState.baseGroupStudents + combinedExtra).distinctBy { it.studentId }
                     currentState.copy(
-                        presentStudentIds = combinedPresent,
+                        presentStudentIds = loadedPresent,
+                        absentStudentIds = loadedAbsent,
+                        lateStudentIds = loadedLate,
+                        excusedStudentIds = loadedExcused,
+                        attendanceStatusMap = statusMap,
                         extraSessionStudents = combinedExtra,
-                        allStudentsInScope = combinedScope
+                        allStudentsInScope = combinedScope,
+                        isLoadingAttendance = false
                     )
                 }
                 applyFilters()
@@ -132,6 +154,7 @@ class FastAttendanceViewModel(
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FastAttendanceVM", "Failed to load existing attendance", e)
                 }
+                _uiState.update { it.copy(isLoadingAttendance = false) }
             }
         }
     }
@@ -161,7 +184,7 @@ class FastAttendanceViewModel(
                 ?: try { com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id } catch (_: Exception) { null }
             
             if (teacherId != null) {
-                val group = groupRepository.getGroupById(teacherId, groupId)
+                val group = try { groupRepository.getGroupById(teacherId, groupId) } catch (_: Exception) { null }
                 if (group != null) {
                     _uiState.update { it.copy(groupName = group.name) }
                 } else {
@@ -366,15 +389,59 @@ class FastAttendanceViewModel(
     }
 
     fun toggleStudentPresent(studentId: String) {
+        val student = allStudentsList.find { it.studentId == studentId }
+        val studentName = student?.fullName ?: "الطالب"
         _uiState.update { state ->
             val currentPresent = state.presentStudentIds.toMutableSet()
+            val currentAbsent = state.absentStudentIds.toMutableSet()
+            val currentStatusMap = state.attendanceStatusMap.toMutableMap()
+            val message: String
+
             if (currentPresent.contains(studentId)) {
                 currentPresent.remove(studentId)
+                currentAbsent.add(studentId)
+                currentStatusMap[studentId] = AttendanceStatus.ABSENT
+                message = "تم تسجيل $studentName غائبًا"
             } else {
                 currentPresent.add(studentId)
+                currentAbsent.remove(studentId)
+                currentStatusMap[studentId] = AttendanceStatus.PRESENT
+                message = "تم تسجيل حضور $studentName ✓"
             }
-            state.copy(presentStudentIds = currentPresent)
+            state.copy(
+                presentStudentIds = currentPresent,
+                absentStudentIds = currentAbsent,
+                attendanceStatusMap = currentStatusMap,
+                statusChangeMessage = message
+            )
         }
+    }
+
+    fun changeAbsentToPresent(studentId: String) {
+        val student = allStudentsList.find { it.studentId == studentId }
+        val studentName = student?.fullName ?: "الطالب"
+        _uiState.update { state ->
+            val updatedPresent = state.presentStudentIds + studentId
+            val updatedAbsent = state.absentStudentIds - studentId
+            val updatedStatusMap = state.attendanceStatusMap + (studentId to AttendanceStatus.PRESENT)
+            val updatedRecent = if (student != null) {
+                (listOf(student) + state.recentScannedStudents.filter { it.studentId != studentId }).take(5)
+            } else state.recentScannedStudents
+
+            state.copy(
+                presentStudentIds = updatedPresent,
+                absentStudentIds = updatedAbsent,
+                attendanceStatusMap = updatedStatusMap,
+                recentScannedStudents = updatedRecent,
+                scanFeedback = if (student != null) ScanFeedback(student, ScanResultType.SUCCESS_PRESENT, student.studentCode) else null,
+                statusChangeMessage = "تم تعديل حالة $studentName من غائب إلى حاضر بنجاح ✓"
+            )
+        }
+        applyFilters()
+    }
+
+    fun clearStatusChangeMessage() {
+        _uiState.update { it.copy(statusChangeMessage = null) }
     }
 
     fun toggleScanner(active: Boolean) {
@@ -391,7 +458,7 @@ class FastAttendanceViewModel(
         val state = _uiState.value
         // O(1) Instant lookup
         val foundGlobalStudent = studentCodeMap[code.lowercase()]
-
+        System.err.println("DEBUG_SCAN: code='$code' found=$foundGlobalStudent keys=${studentCodeMap.keys}")
         if (foundGlobalStudent == null) {
             updateScanFeedback(ScanFeedback(
                 student = null,
@@ -423,6 +490,17 @@ class FastAttendanceViewModel(
             return
         }
 
+        // Check if student is already marked absent in this session/date
+        if (state.absentStudentIds.contains(foundGlobalStudent.studentId) || 
+            state.attendanceStatusMap[foundGlobalStudent.studentId] == AttendanceStatus.ABSENT) {
+            updateScanFeedback(ScanFeedback(
+                student = foundGlobalStudent,
+                type = ScanResultType.ALREADY_ABSENT,
+                rawCode = code
+            ))
+            return
+        }
+
         // Guest student from another group: allow and add to extraSessionStudents without altering primary group
         val isDifferentGroup = state.selectedGroupId != null && foundGlobalStudent.groupId != state.selectedGroupId
         val alreadyInScope = state.allStudentsInScope.any { it.studentId == foundGlobalStudent.studentId }
@@ -434,15 +512,17 @@ class FastAttendanceViewModel(
         }
 
         // Successfully mark present
-        val updatedPresent = state.presentStudentIds.toMutableSet().apply {
-            add(foundGlobalStudent.studentId)
-        }
+        val updatedPresent = (state.presentStudentIds + foundGlobalStudent.studentId)
+        val updatedAbsent = state.absentStudentIds - foundGlobalStudent.studentId
+        val updatedStatusMap = state.attendanceStatusMap + (foundGlobalStudent.studentId to AttendanceStatus.PRESENT)
         val updatedRecent = (listOf(foundGlobalStudent) + state.recentScannedStudents.filter { it.studentId != foundGlobalStudent.studentId }).take(5)
 
         _uiState.update {
             it.copy(
                 extraSessionStudents = updatedExtra,
                 presentStudentIds = updatedPresent,
+                absentStudentIds = updatedAbsent,
+                attendanceStatusMap = updatedStatusMap,
                 recentScannedStudents = updatedRecent
             )
         }
@@ -503,9 +583,11 @@ class FastAttendanceViewModel(
     private fun updateScanFeedback(feedback: ScanFeedback) {
         feedbackJob?.cancel()
         _uiState.update { it.copy(scanFeedback = feedback) }
-        feedbackJob = viewModelScope.launch {
-            delay(3000)
-            _uiState.update { it.copy(scanFeedback = null) }
+        if (feedback.type != ScanResultType.ALREADY_ABSENT) {
+            feedbackJob = viewModelScope.launch {
+                delay(3000)
+                _uiState.update { it.copy(scanFeedback = null) }
+            }
         }
     }
 
@@ -624,9 +706,15 @@ class FastAttendanceViewModel(
 
                 if (result.isSuccess) {
                     val summary = result.getOrNull()
+                    val newStatusMap = records.associate { it.studentId to AttendanceStatus.fromString(it.status) }
+                    val newPresent = records.filter { it.status == AttendanceStatus.PRESENT.name || it.status == AttendanceStatus.LATE.name }.map { it.studentId }.toSet()
+                    val newAbsent = records.filter { it.status == AttendanceStatus.ABSENT.name }.map { it.studentId }.toSet()
                     _uiState.update {
                         it.copy(
                             isSaving = false,
+                            presentStudentIds = newPresent,
+                            absentStudentIds = newAbsent,
+                            attendanceStatusMap = it.attendanceStatusMap + newStatusMap,
                             saveSummary = FastAttendanceSummary(
                                 presentCount = summary?.presentCount ?: records.count { r -> r.status == AttendanceStatus.PRESENT.name },
                                 absentCount = summary?.absentCount ?: records.count { r -> r.status == AttendanceStatus.ABSENT.name },
@@ -635,6 +723,7 @@ class FastAttendanceViewModel(
                             )
                         )
                     }
+                    applyFilters()
                 } else {
                     val ex = result.exceptionOrNull()
                     _uiState.update {
@@ -659,11 +748,11 @@ class FastAttendanceViewModel(
         _uiState.update {
             it.copy(
                 saveSummary = null,
-                presentStudentIds = emptySet(),
                 searchQuery = ""
             )
         }
         applyFilters()
+        loadExistingAttendance()
     }
 
     fun setStudentsForScope(scopeStudents: List<Student>, allStudents: List<Student>) {

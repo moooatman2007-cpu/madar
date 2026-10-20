@@ -13,12 +13,13 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 class MockStudentRepository(
-    private val gradeRepository: MockGradeRepository? = null
+    private val gradeRepository: MockGradeRepository? = null,
+    private val customStudents: List<Student>? = null
 ) : StudentRepository {
 
     private val lastCodeIndex = AtomicInteger(86)
 
-    private val initialStudents: List<Student> = listOf(
+    private val initialStudents: List<Student> = customStudents ?: listOf(
         // الصف الأول الإعدادي (30 طالب) - grade_1
         Student("s_01", "ST-00001", "أحمد محمد علي السيد", "grade_1", "01012345678", true, "01198765432"),
         Student("s_02", "ST-00002", "محمود إبراهيم خليل حسن", "grade_1", "01123456789", true, null),

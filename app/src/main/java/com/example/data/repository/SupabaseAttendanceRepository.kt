@@ -793,7 +793,13 @@ class SupabaseAttendanceRepository(
                 }
                 .decodeList<SupabaseAttendanceDto>()
                 .map { it.toAttendance(teacherId = teacherId) }
-                .filter { it.groupId == groupId }
+                .filter { record ->
+                    if (groupId == null) {
+                        true
+                    } else {
+                        record.groupId == groupId || record.groupId == null
+                    }
+                }
 
             if (com.example.data.auth.AccountSessionManager.isSessionActive(teacherId) && attendanceDao != null) {
                 attendanceDao.upsertAttendance(list.map { it.toEntity() })
