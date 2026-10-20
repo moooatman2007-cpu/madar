@@ -21,6 +21,11 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
       teachers: new Map(),
       students: new Map(),
       teacher_whatsapp_sessions: new Map(),
+      teacher_whatsapp_contacts: new Map(),
+      monthly_reports: new Map(),
+      attendance: new Map(),
+      recitations: new Map(),
+      exams: new Map(),
       // 5 distinct event tables
       notification_events: new Map(),
       homework_notification_events: new Map(),
@@ -36,6 +41,7 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
 
     let wahaShouldFail = false;
     let finalizeShouldFail = false;
+    let metricsQueryShouldFail = false;
 
     function getEventTable(type) {
       switch (type) {
@@ -60,59 +66,64 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
 
     const supabaseMock = {
       from(table) {
-        return {
+        const filters = [];
+        let limitCount = null;
+
+        const chain = {
           select(fields) {
-            return {
-              eq(col1, val1) {
-                return {
-                  eq(col2, val2) {
-                    return {
-                      async maybeSingle() {
-                        const items = Array.from(db[table]?.values() || []);
-                        const match = items.find(
-                          (item) => item[col1] === val1 && item[col2] === val2
-                        );
-                        return { data: match || null, error: null };
-                      },
-                      eq(col3, val3) {
-                        return {
-                          eq(col4, val4) {
-                            return {
-                              eq(col5, val5) {
-                                return {
-                                  limit(n) {
-                                    return {
-                                      async then(resolve) {
-                                        const items = Array.from(db[table]?.values() || []);
-                                        const match = items.filter(
-                                          (item) => item[col1] === val1 &&
-                                                    item[col2] === val2 &&
-                                                    item[col3] === val3 &&
-                                                    item[col4] === val4 &&
-                                                    item[col5] === val5
-                                        );
-                                        resolve({ data: match.slice(0, n), error: null });
-                                      }
-                                    };
-                                  }
-                                };
-                              }
-                            };
-                          }
-                        };
-                      }
-                    };
-                  },
-                  async maybeSingle() {
-                    const items = Array.from(db[table]?.values() || []);
-                    const match = items.find((item) => item[col1] === val1);
-                    return { data: match || null, error: null };
-                  },
-                };
-              },
-            };
+            return chain;
           },
+          eq(col, val) {
+            filters.push({ type: "eq", col, val });
+            return chain;
+          },
+          gte(col, val) {
+            filters.push({ type: "gte", col, val });
+            return chain;
+          },
+          lt(col, val) {
+            filters.push({ type: "lt", col, val });
+            return chain;
+          },
+          limit(n) {
+            limitCount = n;
+            return chain;
+          },
+          async maybeSingle() {
+            if (metricsQueryShouldFail && (table === "monthly_reports" || table === "attendance" || table === "recitations" || table === "exams")) {
+              return { data: null, error: { message: "Simulated database connection failure" } };
+            }
+            const items = Array.from(db[table]?.values() || []);
+            const match = items.find((item) =>
+              filters.every((f) => {
+                if (f.type === "eq") return item[f.col] === f.val;
+                if (f.type === "gte") return item[f.col] >= f.val;
+                if (f.type === "lt") return item[f.col] < f.val;
+                return true;
+              })
+            );
+            return { data: match || null, error: null };
+          },
+          async then(resolve, reject) {
+            if (metricsQueryShouldFail && (table === "attendance" || table === "recitations" || table === "exams")) {
+              return resolve({ data: null, error: { message: "Simulated query error for metrics" } });
+            }
+            const items = Array.from(db[table]?.values() || []);
+            let matches = items.filter((item) =>
+              filters.every((f) => {
+                if (f.type === "eq") return item[f.col] === f.val;
+                if (f.type === "gte") return item[f.col] >= f.val;
+                if (f.type === "lt") return item[f.col] < f.val;
+                return true;
+              })
+            );
+            if (limitCount != null) {
+              matches = matches.slice(0, limitCount);
+            }
+            resolve({ data: matches, error: null });
+          }
         };
+        return chain;
       },
 
       async rpc(funcName, params) {
@@ -242,7 +253,7 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
       }
     };
 
-    function constructExactText(eventType, studentName) {
+    function constructExactText(eventType, studentName, extraDetails) {
       switch (eventType) {
         case "ABSENCE":
           return `السلام عليكم،\n\nنحب نبلغ حضرتك إن الطالب/ة ${studentName} تم تسجيل غيابه/غيابها اليوم.\n\nلو الغياب بعذر، يرجى التواصل مع المعلم.\n\nشكرًا لحضرتك.`;
@@ -252,8 +263,45 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
           return `السلام عليكم،\n\nنود إعلامكم بنتيجة تسميع القرآن الكريم للطالب/ة ${studentName}:\nتم تسجيل جلسة التسميع بنجاح.\n\nبارك الله فيه.`;
         case "EXAM":
           return `السلام عليكم،\n\nنود إعلامكم بنتيجة الاختبار للطالب/ة ${studentName}:\nتم رصد نتيجة الاختبار في سجل الطالب.\n\nمع تمنياتنا بالتوفيق الدائم.`;
-        case "MONTHLY_REPORT":
-          return `السلام عليكم،\n\nنود إعلامكم بصدور التقرير الشهري للطالب/ة ${studentName}.\nيمكنكم مراجعة المعلم للاطلاع على تقرير الأداء الشامل.\n\nمع تحيات إدارة المعلم.`;
+        case "MONTHLY_REPORT": {
+          if (!extraDetails) {
+            return `مدار | التقرير الشهري 📊\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بصدور التقرير الشهري الشامل للطالب/ة: *${studentName}*.\nيمكنكم مراجعة المعلم أو الاطلاع على التقرير التفصيلي.\n\nشاكرين اهتمامكم المستمر ❤️\nمدار — منصة إدارة ومتابعة الطلاب`;
+          }
+          const month = extraDetails.month;
+          const year = extraDetails.year;
+          const monthYearLine = (month != null && year != null) ? `🗓 عن شهر: *${month} / ${year}*\n` : "";
+
+          let attendanceLine = "";
+          if (extraDetails.attendanceTotal != null && extraDetails.attendanceTotal > 0) {
+            const rate = (extraDetails.attendanceRate ?? 0).toFixed(1);
+            attendanceLine = `🟢 نسبة الحضور: *${rate}%* (${extraDetails.attendancePresent ?? 0} من ${extraDetails.attendanceTotal} يوم)\n`;
+          } else if (extraDetails.attendanceTotal === 0) {
+            attendanceLine = `🟢 نسبة الحضور: *0.0%* (لم تُسجل أيام حضور هذا الشهر)\n`;
+          } else if (extraDetails.attendanceRate != null) {
+            attendanceLine = `🟢 نسبة الحضور: *${extraDetails.attendanceRate.toFixed(1)}%*\n`;
+          }
+
+          let recitationLine = "";
+          if (extraDetails.recitationCount != null && extraDetails.recitationCount > 0) {
+            const recRate = (extraDetails.recitationAverage ?? 0).toFixed(1);
+            recitationLine = `📖 معدل التسميع: *${recRate}%* (${extraDetails.recitationCount} تسميع)\n`;
+          } else if (extraDetails.recitationCount === 0) {
+            recitationLine = `📖 معدل التسميع: لا يوجد تسميع مسجل هذا الشهر\n`;
+          }
+
+          let examLine = "";
+          if (extraDetails.examCount != null && extraDetails.examCount > 0) {
+            const examRate = (extraDetails.examAverage ?? 0).toFixed(1);
+            examLine = `📝 متوسط الامتحانات: *${examRate}%* (${extraDetails.examCount} اختبار)\n`;
+          } else if (extraDetails.examCount === 0) {
+            examLine = `📝 متوسط الامتحانات: لا توجد اختبارات مسجلة هذا الشهر\n`;
+          }
+
+          const noteText = extraDetails.teacherNote?.trim();
+          const noteSection = noteText ? `\n💬 تقييم وملاحظات المعلم:\n${noteText}\n` : "";
+
+          return `مدار | التقرير الشهري 📊\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nإليكم ملخص الأداء الشهري للطالب/ة: *${studentName}*\n${monthYearLine}${attendanceLine}${recitationLine}${examLine}${noteSection}\nشاكرين حسن تعاونكم الدائم معنا ❤️\nمدار — منصة إدارة ومتابعة الطلاب`;
+        }
       }
     }
 
@@ -274,9 +322,96 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
         return { success: false, reason: "TENANT_MISMATCH" };
       }
 
+      let extraDetails = undefined;
+      if (eventType === "MONTHLY_REPORT") {
+        if (!sourceId) {
+          await supabaseMock.rpc(`mark_${eventType.toLowerCase()}_notification_failed`, {
+            p_event_id: event.id,
+            p_error: "Monthly report ID missing on event",
+          });
+          return { success: false, reason: "MISSING_SOURCE_ID" };
+        }
+
+        const { data: report, error: reportErr } = await supabaseMock
+          .from("monthly_reports")
+          .select()
+          .eq("id", sourceId)
+          .eq("teacher_id", teacherId)
+          .eq("student_id", studentId)
+          .maybeSingle();
+
+        if (reportErr || !report) {
+          await supabaseMock.rpc(`mark_${eventType.toLowerCase()}_notification_failed`, {
+            p_event_id: event.id,
+            p_error: reportErr ? reportErr.message : "Monthly report not found or tenant mismatch",
+          });
+          return { success: false, reason: "REPORT_NOT_FOUND" };
+        }
+
+        const repYear = Number(report.year);
+        const repMonth = Number(report.month);
+        if (!repYear || !repMonth || repMonth < 1 || repMonth > 12 || repYear < 2020) {
+          await supabaseMock.rpc(`mark_${eventType.toLowerCase()}_notification_failed`, {
+            p_event_id: event.id,
+            p_error: `Invalid monthly report period: month=${report.month}, year=${report.year}`,
+          });
+          return { success: false, reason: "INVALID_PERIOD" };
+        }
+
+        const startDate = `${repYear}-${String(repMonth).padStart(2, "0")}-01`;
+        const nextYear = repMonth === 12 ? repYear + 1 : repYear;
+        const nextMonth = repMonth === 12 ? 1 : repMonth + 1;
+        const endDate = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+
+        const [attRes, recRes, examRes] = await Promise.all([
+          supabaseMock.from("attendance").select().eq("teacher_id", teacherId).eq("student_id", studentId).gte("date", startDate).lt("date", endDate).limit(500),
+          supabaseMock.from("recitations").select().eq("teacher_id", teacherId).eq("student_id", studentId).gte("date", startDate).lt("date", endDate).limit(500),
+          supabaseMock.from("exams").select().eq("teacher_id", teacherId).eq("student_id", studentId).gte("date", startDate).lt("date", endDate).limit(500),
+        ]);
+
+        if (attRes.error || recRes.error || examRes.error) {
+          const errMsg = attRes.error?.message || recRes.error?.message || examRes.error?.message;
+          await supabaseMock.rpc(`mark_${eventType.toLowerCase()}_notification_failed`, {
+            p_event_id: event.id,
+            p_error: errMsg,
+          });
+          return { success: false, reason: "METRICS_FETCH_FAILED" };
+        }
+
+        const attRecords = attRes.data || [];
+        const totalDays = attRecords.length;
+        const presentCount = attRecords.filter((a) => a.status === "PRESENT").length;
+        const attendanceRate = totalDays > 0 ? (presentCount / totalDays) * 100 : 0;
+
+        const recRecords = (recRes.data || []).filter((r) => Number(r.max_score) > 0 && r.score != null);
+        const recCount = recRecords.length;
+        const recAvg = recCount > 0
+          ? recRecords.reduce((acc, r) => acc + (Number(r.score) / Number(r.max_score)) * 100, 0) / recCount
+          : null;
+
+        const examRecords = (examRes.data || []).filter((e) => Number(e.max_score) > 0 && e.score != null);
+        const exCount = examRecords.length;
+        const exAvg = exCount > 0
+          ? examRecords.reduce((acc, e) => acc + (Number(e.score) / Number(e.max_score)) * 100, 0) / exCount
+          : null;
+
+        extraDetails = {
+          month: repMonth,
+          year: repYear,
+          attendanceRate,
+          attendancePresent: presentCount,
+          attendanceTotal: totalDays,
+          recitationAverage: recAvg,
+          recitationCount: recCount,
+          examAverage: exAvg,
+          examCount: exCount,
+          teacherNote: report.teacher_note,
+        };
+      }
+
       const cleanPhone = formatParentPhone(student.parent_phone);
       const chatId = `${cleanPhone}@c.us`;
-      const messageText = constructExactText(eventType, student.full_name);
+      const messageText = constructExactText(eventType, student.full_name, extraDetails);
 
       // 2. Pre-Send Idempotency Check
       const normType = eventType === "ABSENCE" ? "ATTENDANCE_ABSENT" : eventType;
@@ -360,6 +495,7 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
       wahaChatHistory,
       setWahaShouldFail: (v) => { wahaShouldFail = v; },
       setFinalizeShouldFail: (v) => { finalizeShouldFail = v; },
+      setMetricsQueryShouldFail: (v) => { metricsQueryShouldFail = v; },
       supabaseMock,
       processEvent,
       getEventTable,
@@ -368,6 +504,8 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
       formatParentPhone,
     };
   }
+  global.createHarness = createHarness;
+
 
   // --------------------------------------------------------------------------
   // TEST 1: WAHA fails before sending -> event can retry
@@ -734,6 +872,14 @@ describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 
     const sId = "s-all";
 
     h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "Tariq", parent_phone: "01099999999", has_whatsapp: true });
+    h.db.monthly_reports.set("mr-all", {
+      id: "mr-all",
+      teacher_id: tId,
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: "أداء متميز وتفوق مستمر",
+    });
 
     const types = [
       { type: "ABSENCE", table: h.db.notification_events, srcCol: "attendance_id", srcId: "att-all" },
@@ -1268,8 +1414,6 @@ describe("CheckWahaRecentMessageSent Robustness & State Verification (FOUND, NOT
     assert.equal(notFoundOutcome.success, false);
   });
 
-
-
   // ============================================================================
   // SUITE 6: Scoped Targeted Event, Dry-Run Simulation, and Pre-Claim Safety
   // ============================================================================
@@ -1649,9 +1793,314 @@ describe("Single-Run Consecutive Absence Processing & Reliability", () => {
     assert.equal(events[1].status, "FAILED");
     assert.equal(events[2].status, "SENT");
   });
-});
 
+
+// ============================================================================
+// SUITE 8: Monthly Report Custom Aggregation, Formatting & Failure Handling
+// ============================================================================
+describe("Monthly Report Custom Aggregation, Formatting & Failure Handling", () => {
+  test("1. Full monthly report message is formatted with exact metrics, student name, and teacher note", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-100";
+    const reportId = "mr-100";
+    const eventId = "ev-mr-100";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "أحمد محمود", parent_phone: "01012345678", has_whatsapp: true });
+    h.db.monthly_reports.set(reportId, {
+      id: reportId,
+      teacher_id: tId,
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: "طالب متميز وملتزم خلقياً ودراسياً",
+    });
+
+    // 5 attendance records in October 2026: 4 PRESENT, 1 ABSENT
+    h.db.attendance.set("att-1", { id: "att-1", teacher_id: tId, student_id: sId, date: "2026-10-02", status: "PRESENT" });
+    h.db.attendance.set("att-2", { id: "att-2", teacher_id: tId, student_id: sId, date: "2026-10-05", status: "PRESENT" });
+    h.db.attendance.set("att-3", { id: "att-3", teacher_id: tId, student_id: sId, date: "2026-10-09", status: "ABSENT" });
+    h.db.attendance.set("att-4", { id: "att-4", teacher_id: tId, student_id: sId, date: "2026-10-12", status: "PRESENT" });
+    h.db.attendance.set("att-5", { id: "att-5", teacher_id: tId, student_id: sId, date: "2026-10-16", status: "PRESENT" });
+
+    // 2 recitations in October 2026: 9/10 (90%) and 10/10 (100%) -> Avg 95.0%
+    h.db.recitations.set("rec-1", { id: "rec-1", teacher_id: tId, student_id: sId, date: "2026-10-05", score: 9, max_score: 10 });
+    h.db.recitations.set("rec-2", { id: "rec-2", teacher_id: tId, student_id: sId, date: "2026-10-12", score: 10, max_score: 10 });
+
+    // 1 exam in October 2026: 88/100 (88%) -> Avg 88.0%
+    h.db.exams.set("ex-1", { id: "ex-1", teacher_id: tId, student_id: sId, date: "2026-10-14", score: 88, max_score: 100 });
+
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: reportId,
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    assert.equal(claimed.length, 1);
+
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+    assert.equal(res.success, true);
+    assert.ok(res.wahaMessageId);
+
+    assert.equal(h.wahaSentLog.length, 1, "Exactly 1 WAHA message must be sent");
+    const sentMsg = h.wahaSentLog[0].text;
+
+    // Verify all key sections of the message
+    assert.ok(sentMsg.includes("مدار | التقرير الشهري 📊"));
+    assert.ok(sentMsg.includes("أحمد محمود"));
+    assert.ok(sentMsg.includes("🗓 عن شهر: *10 / 2026*"));
+    assert.ok(sentMsg.includes("🟢 نسبة الحضور: *80.0%* (4 من 5 يوم)"));
+    assert.ok(sentMsg.includes("📖 معدل التسميع: *95.0%* (2 تسميع)"));
+    assert.ok(sentMsg.includes("📝 متوسط الامتحانات: *88.0%* (1 اختبار)"));
+    assert.ok(sentMsg.includes("طالب متميز وملتزم خلقياً ودراسياً"));
+    assert.ok(sentMsg.includes("مدار — منصة إدارة ومتابعة الطلاب"));
+
+    // Ensure no null/undefined in text
+    assert.equal(sentMsg.includes("null"), false);
+    assert.equal(sentMsg.includes("undefined"), false);
+    assert.equal(sentMsg.includes("NaN"), false);
+
+    const ev = h.db.monthly_report_notification_events.get(eventId);
+    assert.equal(ev.status, "SENT");
+  });
+
+  test("2. Zero metrics and empty notes format gracefully without null or division by zero", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-101";
+    const reportId = "mr-101";
+    const eventId = "ev-mr-101";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "يوسف خالد", parent_phone: "01011112222", has_whatsapp: true });
+    h.db.monthly_reports.set(reportId, {
+      id: reportId,
+      teacher_id: tId,
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: "", // Empty note
+    });
+
+    // Zero attendance, zero recitations, zero exams in DB for this student
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: reportId,
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    assert.equal(claimed.length, 1);
+
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+    assert.equal(res.success, true);
+
+    const sentMsg = h.wahaSentLog[0].text;
+    assert.ok(sentMsg.includes("يوسف خالد"));
+    assert.ok(sentMsg.includes("لم تُسجل أيام حضور هذا الشهر"));
+    assert.ok(sentMsg.includes("لا يوجد تسميع مسجل هذا الشهر"));
+    assert.ok(sentMsg.includes("لا توجد اختبارات مسجلة هذا الشهر"));
+    // Note section omitted
+    assert.equal(sentMsg.includes("تقييم وملاحظات المعلم"), false);
+    assert.equal(sentMsg.includes("null"), false);
+    assert.equal(sentMsg.includes("NaN"), false);
+  });
+
+  test("3. Missing monthly report record halts execution and sends NO message", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-102";
+    const eventId = "ev-mr-102";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "مروان عمر", parent_phone: "01033334444", has_whatsapp: true });
+    // Do NOT create record in monthly_reports
+
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: "non-existent-mr-id",
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+
+    assert.equal(res.success, false);
+    assert.equal(res.reason, "REPORT_NOT_FOUND");
+    assert.equal(h.wahaSentLog.length, 0, "No WAHA message must ever be sent when report is missing");
+
+    const ev = h.db.monthly_report_notification_events.get(eventId);
+    assert.notEqual(ev.status, "SENT");
+  });
+
+  test("4. Tenant mismatch (different teacher_id) halts execution and sends NO message", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-103";
+    const reportId = "mr-103";
+    const eventId = "ev-mr-103";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "زياد أيمن", parent_phone: "01055556666", has_whatsapp: true });
+    h.db.monthly_reports.set(reportId, {
+      id: reportId,
+      teacher_id: "teacher-other", // Tenant violation
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: "ملاحظة",
+    });
+
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: reportId,
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+
+    assert.equal(res.success, false);
+    assert.equal(res.reason, "REPORT_NOT_FOUND");
+    assert.equal(h.wahaSentLog.length, 0, "No WAHA message must be sent across tenant boundaries");
+  });
+
+  test("5. Database query failure during metrics fetch triggers failure without sending partial message", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-104";
+    const reportId = "mr-104";
+    const eventId = "ev-mr-104";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "كريم سامي", parent_phone: "01077778888", has_whatsapp: true });
+    h.db.monthly_reports.set(reportId, {
+      id: reportId,
+      teacher_id: tId,
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: "ملاحظة",
+    });
+
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: reportId,
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    // Simulate metrics query failure
+    h.setMetricsQueryShouldFail(true);
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+
+    assert.equal(res.success, false);
+    assert.equal(h.wahaSentLog.length, 0, "No WAHA message must be sent if any metric query fails");
+
+    const ev = h.db.monthly_report_notification_events.get(eventId);
+    assert.notEqual(ev.status, "SENT");
+  });
+
+  test("6. Records outside monthly date range (e.g. adjacent months) are strictly excluded", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-105";
+    const reportId = "mr-105";
+    const eventId = "ev-mr-105";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "مصطفى إبراهيم", parent_phone: "01088889999", has_whatsapp: true });
+    h.db.monthly_reports.set(reportId, {
+      id: reportId,
+      teacher_id: tId,
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: "مستمر في التقدم",
+    });
+
+    // 1 attendance inside October (PRESENT)
+    h.db.attendance.set("att-in", { id: "att-in", teacher_id: tId, student_id: sId, date: "2026-10-15", status: "PRESENT" });
+    // 1 attendance in September (ABSENT - should be excluded)
+    h.db.attendance.set("att-sep", { id: "att-sep", teacher_id: tId, student_id: sId, date: "2026-09-30", status: "ABSENT" });
+    // 1 attendance in November (ABSENT - should be excluded)
+    h.db.attendance.set("att-nov", { id: "att-nov", teacher_id: tId, student_id: sId, date: "2026-11-01", status: "ABSENT" });
+
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: reportId,
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+    assert.equal(res.success, true);
+
+    const sentMsg = h.wahaSentLog[0].text;
+    // October had 1 present out of 1 day -> 100.0% (1 من 1 يوم)
+    assert.ok(sentMsg.includes("🟢 نسبة الحضور: *100.0%* (1 من 1 يوم)"));
+  });
+
+  test("7. Multiline teacher note with special characters and emojis is preserved intact", async () => {
+    const h = createHarness();
+    const tId = "t-1";
+    const sId = "s-106";
+    const reportId = "mr-106";
+    const eventId = "ev-mr-106";
+
+    const multilineNote = "1. حفظ جزء عم كاملاً بإتقان.\n2. نوصي بمراجعة سورة النبأ يومياً.\n✨ شكراً للأسرة الكريمة على الدعم والمتابعة!";
+
+    h.db.students.set(sId, { id: sId, teacher_id: tId, full_name: "هدى عادل", parent_phone: "01099990000", has_whatsapp: true });
+    h.db.monthly_reports.set(reportId, {
+      id: reportId,
+      teacher_id: tId,
+      student_id: sId,
+      month: 10,
+      year: 2026,
+      teacher_note: multilineNote,
+    });
+
+    h.db.monthly_report_notification_events.set(eventId, {
+      id: eventId,
+      teacher_id: tId,
+      student_id: sId,
+      monthly_report_id: reportId,
+      status: "PENDING",
+      attempts: 0,
+      locked: false,
+    });
+
+    const { data: claimed } = await h.supabaseMock.rpc("claim_monthly_report_notification_event");
+    const res = await h.processEvent("MONTHLY_REPORT", claimed[0]);
+    assert.equal(res.success, true);
+
+    const sentMsg = h.wahaSentLog[0].text;
+    assert.ok(sentMsg.includes(multilineNote));
+  });
 });
+});});
+
 
 
 

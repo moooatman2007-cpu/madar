@@ -77,6 +77,16 @@ export function constructNotificationMessage(
     maxScore?: number | string | null;
     subject?: string | null;
     examName?: string | null;
+    month?: number | null;
+    year?: number | null;
+    attendanceRate?: number | null;
+    attendancePresent?: number | null;
+    attendanceTotal?: number | null;
+    recitationAverage?: number | null;
+    recitationCount?: number | null;
+    examAverage?: number | null;
+    examCount?: number | null;
+    teacherNote?: string | null;
   }
 ): string {
   switch (eventType) {
@@ -107,8 +117,42 @@ export function constructNotificationMessage(
       }
       return `مدار | نتيجة الاختبار 📝\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بنتيجة الاختبار للطالب/ة: *${studentName}*${examInfo ? `\n${examInfo}` : "\nتم رصد نتيجة الاختبار في سجل أداء الطالب.\n"}\nمع تمنياتنا بمزيد من النجاح والتميز 🎯\nمدار — منصة إدارة ومتابعة الطلاب`;
     }
-    case "MONTHLY_REPORT":
-      return `مدار | التقرير الشهري 📊\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nنود إعلامكم بصدور التقرير الشهري الشامل للطالب/ة: *${studentName}*.\nيمكنكم مراجعة المعلم أو الاطلاع على التقرير التفصيلي.\n\nشاكرين اهتمامكم المستمر ❤️\nمدار — منصة إدارة ومتابعة الطلاب`;
+    case "MONTHLY_REPORT": {
+      const month = extraDetails?.month;
+      const year = extraDetails?.year;
+      const monthYearLine = (month != null && year != null) ? `🗓 عن شهر: *${month} / ${year}*\n` : "";
+
+      let attendanceLine = "";
+      if (extraDetails?.attendanceTotal != null && extraDetails.attendanceTotal > 0) {
+        const rate = (extraDetails.attendanceRate ?? 0).toFixed(1);
+        attendanceLine = `🟢 نسبة الحضور: *${rate}%* (${extraDetails.attendancePresent ?? 0} من ${extraDetails.attendanceTotal} يوم)\n`;
+      } else if (extraDetails?.attendanceTotal === 0) {
+        attendanceLine = `🟢 نسبة الحضور: *0.0%* (لم تُسجل أيام حضور هذا الشهر)\n`;
+      } else if (extraDetails?.attendanceRate != null) {
+        attendanceLine = `🟢 نسبة الحضور: *${extraDetails.attendanceRate.toFixed(1)}%*\n`;
+      }
+
+      let recitationLine = "";
+      if (extraDetails?.recitationCount != null && extraDetails.recitationCount > 0) {
+        const recRate = (extraDetails.recitationAverage ?? 0).toFixed(1);
+        recitationLine = `📖 معدل التسميع: *${recRate}%* (${extraDetails.recitationCount} تسميع)\n`;
+      } else if (extraDetails?.recitationCount === 0) {
+        recitationLine = `📖 معدل التسميع: لا يوجد تسميع مسجل هذا الشهر\n`;
+      }
+
+      let examLine = "";
+      if (extraDetails?.examCount != null && extraDetails.examCount > 0) {
+        const examRate = (extraDetails.examAverage ?? 0).toFixed(1);
+        examLine = `📝 متوسط الامتحانات: *${examRate}%* (${extraDetails.examCount} اختبار)\n`;
+      } else if (extraDetails?.examCount === 0) {
+        examLine = `📝 متوسط الامتحانات: لا توجد اختبارات مسجلة هذا الشهر\n`;
+      }
+
+      const noteText = extraDetails?.teacherNote?.trim();
+      const noteSection = noteText ? `\n💬 تقييم وملاحظات المعلم:\n${noteText}\n` : "";
+
+      return `مدار | التقرير الشهري 📊\n\nالسلام عليكم ورحمة الله وبركاته 🌷\n\nإليكم ملخص الأداء الشهري للطالب/ة: *${studentName}*\n${monthYearLine}${attendanceLine}${recitationLine}${examLine}${noteSection}\nشاكرين حسن تعاونكم الدائم معنا ❤️\nمدار — منصة إدارة ومتابعة الطلاب`;
+    }
   }
 }
 
@@ -541,6 +585,16 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
     maxScore?: number | string | null;
     subject?: string | null;
     examName?: string | null;
+    month?: number | null;
+    year?: number | null;
+    attendanceRate?: number | null;
+    attendancePresent?: number | null;
+    attendanceTotal?: number | null;
+    recitationAverage?: number | null;
+    recitationCount?: number | null;
+    examAverage?: number | null;
+    examCount?: number | null;
+    teacherNote?: string | null;
   } | undefined = undefined;
 
   if (eventType === "RECITATION" && sourceId) {
@@ -580,6 +634,107 @@ export async function processNotificationEvent(ctx: ProcessEventContext): Promis
       }
     } catch (_err) {
       // Graceful fallback to default exam template
+    }
+  } else if (eventType === "MONTHLY_REPORT") {
+    if (!sourceId) {
+      await recordFailed("Monthly report ID missing on event");
+      return { success: false, reconciled: false, duplicatePrevented: false, error: "Monthly report ID missing" };
+    }
+
+    try {
+      const { data: report, error: reportErr } = await supabase
+        .from("monthly_reports")
+        .select("id, teacher_id, student_id, month, year, teacher_note")
+        .eq("id", sourceId)
+        .eq("teacher_id", teacherId)
+        .eq("student_id", studentId)
+        .maybeSingle();
+
+      if (reportErr || !report) {
+        const errMsg = reportErr ? `Database error fetching monthly report: ${reportErr.message}` : "Monthly report not found or tenant mismatch";
+        await recordFailed(errMsg);
+        return { success: false, reconciled: false, duplicatePrevented: false, error: errMsg };
+      }
+
+      const repYear = Number(report.year);
+      const repMonth = Number(report.month);
+      if (!repYear || !repMonth || repMonth < 1 || repMonth > 12 || repYear < 2020) {
+        const errMsg = `Invalid monthly report period: month=${report.month}, year=${report.year}`;
+        await recordFailed(errMsg);
+        return { success: false, reconciled: false, duplicatePrevented: false, error: errMsg };
+      }
+
+      const startDate = `${repYear}-${String(repMonth).padStart(2, "0")}-01`;
+      const nextYear = repMonth === 12 ? repYear + 1 : repYear;
+      const nextMonth = repMonth === 12 ? 1 : repMonth + 1;
+      const endDate = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+
+      const [attRes, recRes, examRes] = await Promise.all([
+        supabase
+          .from("attendance")
+          .select("status")
+          .eq("teacher_id", teacherId)
+          .eq("student_id", studentId)
+          .gte("date", startDate)
+          .lt("date", endDate)
+          .limit(500),
+        supabase
+          .from("recitations")
+          .select("score, max_score")
+          .eq("teacher_id", teacherId)
+          .eq("student_id", studentId)
+          .gte("date", startDate)
+          .lt("date", endDate)
+          .limit(500),
+        supabase
+          .from("exams")
+          .select("score, max_score")
+          .eq("teacher_id", teacherId)
+          .eq("student_id", studentId)
+          .gte("date", startDate)
+          .lt("date", endDate)
+          .limit(500),
+      ]);
+
+      if (attRes.error || recRes.error || examRes.error) {
+        const errMsg = `Failed to fetch monthly metrics: ${attRes.error?.message || recRes.error?.message || examRes.error?.message}`;
+        await recordFailed(errMsg);
+        return { success: false, reconciled: false, duplicatePrevented: false, error: errMsg };
+      }
+
+      const attendanceRecords = attRes.data ?? [];
+      const totalDays = attendanceRecords.length;
+      const presentCount = attendanceRecords.filter((a: any) => a.status === "PRESENT").length;
+      const attendanceRate = totalDays > 0 ? (presentCount / totalDays) * 100 : 0;
+
+      const recitationRecords = (recRes.data ?? []).filter((r: any) => Number(r.max_score) > 0 && r.score != null);
+      const recCount = recitationRecords.length;
+      const recAvg = recCount > 0
+        ? recitationRecords.reduce((acc: number, r: any) => acc + (Number(r.score) / Number(r.max_score)) * 100, 0) / recCount
+        : null;
+
+      const examRecords = (examRes.data ?? []).filter((e: any) => Number(e.max_score) > 0 && e.score != null);
+      const exCount = examRecords.length;
+      const exAvg = exCount > 0
+        ? examRecords.reduce((acc: number, e: any) => acc + (Number(e.score) / Number(e.max_score)) * 100, 0) / exCount
+        : null;
+
+      extraDetails = {
+        month: repMonth,
+        year: repYear,
+        attendanceRate,
+        attendancePresent: presentCount,
+        attendanceTotal: totalDays,
+        recitationAverage: recAvg,
+        recitationCount: recCount,
+        examAverage: exAvg,
+        examCount: exCount,
+        teacherNote: report.teacher_note,
+      };
+    } catch (err) {
+      const errMsg = `Unexpected error preparing monthly report: ${err instanceof Error ? err.message : String(err)}`;
+      await recordFailed(errMsg);
+      return { success: false, reconciled: false, duplicatePrevented: false, error: errMsg };
     }
   }
 

@@ -145,6 +145,13 @@ class StudentDetailRefreshLifecycleTest {
         val student2 = studentRepository.addStudent("طالب ثاني", "prep_1", "01033333332", true, null).map { it.data }.getOrThrow()
 
         val slowAttendanceRepository = object : AttendanceRepository by attendanceRepository {
+            override fun getAttendanceForStudent(studentId: String): Flow<List<Attendance>> = flow {
+                if (studentId == student1.studentId) {
+                    delay(500) // Simulate slow delayed response for student 1
+                }
+                emit(listOf(Attendance(attendanceId = "att_$studentId", studentId = studentId, teacherId = "teacher_x", date = "2026-09-01", status = AttendanceStatus.PRESENT, note = null)))
+            }
+
             override fun getAttendanceForStudentByMonth(studentId: String, year: Int, month: Int): Flow<List<Attendance>> = flow {
                 if (studentId == student1.studentId) {
                     delay(500) // Simulate slow delayed response for student 1
