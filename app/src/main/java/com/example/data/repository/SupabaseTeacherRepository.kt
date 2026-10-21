@@ -33,45 +33,33 @@ class SupabaseTeacherRepository : TeacherRepository {
             return@withContext mockTeacher
         }
 
-        try {
-            val user = client.auth.currentUserOrNull() ?: return@withContext null
-            val teacherId = user.id
-            val result = try {
-                client.postgrest["teachers"]
-                    .select {
-                        filter {
-                            eq("id", teacherId)
-                        }
-                    }
-                    .decodeSingleOrNull<Teacher>()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
-            }
+        val user = client.auth.currentUserOrNull() ?: return@withContext null
+        val teacherId = user.id
 
-            val metaStage = user.userMetadata?.get("educational_stage")?.toString()?.replace("\"", "")
-            val finalTeacher = (result ?: Teacher(
-                id = teacherId,
-                email = user.email ?: "",
-                fullName = user.userMetadata?.get("full_name")?.toString()?.replace("\"", "") ?: "",
-                educationalStage = metaStage
-            )).let { t ->
-                if (t.educationalStage == null && !metaStage.isNullOrBlank()) {
-                    t.copy(educationalStage = metaStage)
-                } else t
+        // Execute PostgREST query directly.
+        // If this throws an exception (network error, timeout, 500), let it propagate
+        // so callers can distinguish between query failure and a truly missing record.
+        val result = client.postgrest["teachers"]
+            .select {
+                filter {
+                    eq("id", teacherId)
+                }
             }
-            _currentTeacher.value = finalTeacher
-            finalTeacher
-        } catch (e: Exception) {
-            e.printStackTrace()
-            val user = client.auth.currentUserOrNull()
-            if (user != null) {
-                val metaStage = user.userMetadata?.get("educational_stage")?.toString()?.replace("\"", "")
-                val fallback = Teacher(id = user.id, email = user.email ?: "", educationalStage = metaStage)
-                _currentTeacher.value = fallback
-                fallback
-            } else null
+            .decodeSingleOrNull<Teacher>()
+
+        val metaStage = user.userMetadata?.get("educational_stage")?.toString()?.replace("\"", "")
+        val finalTeacher = (result ?: Teacher(
+            id = teacherId,
+            email = user.email ?: "",
+            fullName = user.userMetadata?.get("full_name")?.toString()?.replace("\"", "") ?: "",
+            educationalStage = metaStage
+        )).let { t ->
+            if (t.educationalStage == null && !metaStage.isNullOrBlank()) {
+                t.copy(educationalStage = metaStage)
+            } else t
         }
+        _currentTeacher.value = finalTeacher
+        finalTeacher
     }
 
     override suspend fun updateTeacherProfile(

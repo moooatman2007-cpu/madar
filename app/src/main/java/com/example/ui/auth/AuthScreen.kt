@@ -73,6 +73,7 @@ import com.example.data.auth.SafeAuthErrorMapper
 import com.example.data.auth.SafeAuthLogger
 import com.example.data.repository.RepositoryProvider
 import com.example.data.repository.TeacherRepository
+import com.example.core.model.Teacher
 import com.example.ui.components.MidarFullLogo
 import com.example.ui.theme.MidarBlue
 import com.example.ui.theme.MidarBlueLight
@@ -243,7 +244,15 @@ class AuthViewModel : ViewModel() {
                 val user = SupabaseClientProvider.client.auth.currentUserOrNull()
                 if (user != null) {
                     AccountSessionManager.setActiveTeacherId(user.id)
-                    val teacher = teacherRepository.fetchCurrentTeacher()
+                    val teacher: Teacher? = try {
+                        teacherRepository.fetchCurrentTeacher()
+                    } catch (e: Exception) {
+                        SafeAuthLogger.logAuthError("AuthViewModel", "fetchCurrentTeacher", e)
+                        _errorMessage.value = "تم التحقق من بيانات الدخول بنجاح، ولكن تعذر تحميل ملف المدرس من الخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى."
+                        onResult?.invoke(false)
+                        return@launch
+                    }
+
                     val status = teacher?.accountStatus ?: "pending"
                     if (status == "active") {
                         _authState.value = AuthState.LoggedIn(userId = user.id, email = user.email)
@@ -254,6 +263,7 @@ class AuthViewModel : ViewModel() {
                     }
                 } else {
                     _authState.value = AuthState.LoggedOut
+                    _errorMessage.value = "لم يتم إنشاء جلسة دخول صالحة، يرجى المحاولة مرة أخرى."
                     onResult?.invoke(false)
                 }
             } catch (e: Exception) {
@@ -317,7 +327,7 @@ class AuthViewModel : ViewModel() {
                     // Ignore
                 }
                 _authState.value = AuthState.LoggedOut
-                _successMessage.value = "تم إنشاء الحساب بنجاح، وحسابك الآن في انتظار تفعيل الإدارة."
+                _successMessage.value = "تم إنشاء الحساب بنجاح. إذا طُلب منك تأكيد البريد يرجى فتح رابط التأكيد، والحساب الآن في انتظار تفعيل الإدارة."
                 onSignUpSuccess()
             } catch (e: Exception) {
                 SafeAuthLogger.logAuthError("AuthViewModel", "signUp", e)

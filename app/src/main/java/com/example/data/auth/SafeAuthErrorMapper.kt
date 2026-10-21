@@ -46,9 +46,13 @@ object SafeAuthErrorMapper {
             if (fromCode != null) {
                 return sanitizeOutput(fromCode, context)
             }
-            val fromDesc = mapRawStringToSafeArabic(throwable.errorDescription, context)
+            val fromDesc = throwable.errorDescription?.let { mapRawStringToSafeArabic(it, context) }
             if (fromDesc != null) {
                 return sanitizeOutput(fromDesc, context)
+            }
+            val fromError = throwable.error?.let { mapRawStringToSafeArabic(it, context) }
+            if (fromError != null) {
+                return sanitizeOutput(fromError, context)
             }
         }
 
@@ -180,9 +184,31 @@ object SafeAuthErrorMapper {
             lower.contains("signups not allowed") ->
                 "إنشاء الحسابات غير متاح حالياً"
 
-            // User banned
-            lower.contains("user_banned") ->
-                "هذا الحساب معطل، يرجى التواصل مع الإدارة"
+            // Database trigger or server-side failure during sign-up
+            lower.contains("database error") ||
+            lower.contains("unexpected_failure") ||
+            lower.contains("error saving new user") ||
+            lower.contains("error saving user") ||
+            lower.contains("internal server error") ->
+                "حدث خطأ في خادم قاعدة البيانات أثناء معالجة الطلب، يرجى المحاولة لاحقاً."
+
+            // Provider disabled
+            lower.contains("email logins are disabled") ||
+            lower.contains("email provider is disabled") ->
+                "تسجيل الدخول بالبريد الإلكتروني غير مفعّل في النظام."
+
+            // SSL / Handshake issues
+            lower.contains("sslhandshakeexception") ||
+            lower.contains("certpathvalidatorexception") ||
+            lower.contains("ssl") && lower.contains("exception") ->
+                "تعذر إنشاء اتصال آمن بالخادم، يرجى التحقق من اتصال الشبكة وضبط التاريخ والوقت في الهاتف."
+
+            // HTTP 400 Bad Request specific to context
+            (lower.contains("400") || lower.contains("bad request")) && context == AuthActionContext.SIGN_IN ->
+                "بيانات الدخول غير صحيحة، يرجى التأكد من البريد وكلمة المرور"
+
+            (lower.contains("400") || lower.contains("bad request")) && context == AuthActionContext.SIGN_UP ->
+                "تعذر إنشاء الحساب، يرجى التأكد من صحة البيانات المدخلة واستيفاء شروط كلمة المرور."
 
             // Network / connectivity issues
             lower.contains("connectexception") ||
@@ -191,7 +217,9 @@ object SafeAuthErrorMapper {
             lower.contains("failed to connect") ||
             lower.contains("network error") ||
             lower.contains("no internet") ||
-            lower.contains("connection refused") ->
+            lower.contains("unable to resolve host") ||
+            lower.contains("connection refused") ||
+            lower.contains("timeout") ->
                 "تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى."
 
             else -> null

@@ -509,7 +509,7 @@ fun MoreScreen(
                 },
                 title = {
                     Text(
-                        text = "Student Manager",
+                        text = "مدار للمدرس",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         textAlign = TextAlign.Center
                     )
@@ -520,6 +520,13 @@ fun MoreScreen(
                             text = "تطبيق احترافي لإدارة بيانات الطلاب والصفوف المدرسية للمدرسين.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(Dimens.Spacing12))
+                        Text(
+                            text = "المطوّر: محمود عتمان",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
                             textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(Dimens.Spacing12))

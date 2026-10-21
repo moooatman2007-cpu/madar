@@ -8,6 +8,72 @@ plugins {
   alias(libs.plugins.roborazzi)
 }
 
+fun parseEnvFile(file: File): Map<String, String> {
+  val envMap = mutableMapOf<String, String>()
+  if (file.exists() && file.isFile) {
+    for (line in file.readLines()) {
+      val trimmed = line.trim()
+      if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+        val splitIndex = trimmed.indexOf('=')
+        if (splitIndex != -1) {
+          val key = trimmed.substring(0, splitIndex).trim()
+          val value = trimmed.substring(splitIndex + 1).trim().trim('"', '\'')
+          if (key.isNotEmpty()) {
+            envMap[key] = value
+          }
+        }
+      }
+    }
+  }
+  return envMap
+}
+
+val rootEnvFile = File(rootDir, ".env")
+val rootEnvMap = parseEnvFile(rootEnvFile)
+
+fun resolveConfigProperty(key: String, envMap: Map<String, String> = rootEnvMap): String {
+  val systemEnv = System.getenv(key)
+  if (!systemEnv.isNullOrBlank()) {
+    return systemEnv.trim()
+  }
+  return envMap[key]?.trim() ?: ""
+}
+
+fun validateSupabaseConfig(
+  supabaseUrl: String,
+  supabaseKey: String,
+  supabaseEdgeUrl: String,
+  hasEnvFile: Boolean
+): List<String> {
+  val errors = mutableListOf<String>()
+
+  if (!hasEnvFile && System.getenv("SUPABASE_URL").isNullOrBlank()) {
+    errors.add("Missing root '.env' file. Production Release builds require a real '.env' file or environment variables containing Production Supabase configuration.")
+  }
+
+  if (supabaseUrl.isBlank()) {
+    errors.add("Missing or empty 'SUPABASE_URL' (neither set in environment variables nor in root .env).")
+  } else if (supabaseUrl.contains("placeholder", ignoreCase = true)) {
+    errors.add("'SUPABASE_URL' contains placeholder value.")
+  } else if (!supabaseUrl.startsWith("https://") && !supabaseUrl.startsWith("http://")) {
+    errors.add("'SUPABASE_URL' must start with 'https://'.")
+  }
+
+  if (supabaseKey.isBlank()) {
+    errors.add("Missing or empty 'SUPABASE_PUBLISHABLE_KEY' (neither set in environment variables nor in root .env).")
+  } else if (supabaseKey.contains("placeholder", ignoreCase = true)) {
+    errors.add("'SUPABASE_PUBLISHABLE_KEY' contains placeholder value.")
+  }
+
+  if (supabaseEdgeUrl.isBlank()) {
+    errors.add("Missing or empty 'SUPABASE_EDGE_FUNCTION_URL' (neither set in environment variables nor in root .env).")
+  } else if (supabaseEdgeUrl.contains("placeholder", ignoreCase = true)) {
+    errors.add("'SUPABASE_EDGE_FUNCTION_URL' contains placeholder value.")
+  }
+
+  return errors
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -22,9 +88,13 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    buildConfigField("String", "SUPABASE_URL", "\"${System.getenv("SUPABASE_URL") ?: ""}\"")
-    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${System.getenv("SUPABASE_PUBLISHABLE_KEY") ?: ""}\"")
-    buildConfigField("String", "SUPABASE_EDGE_FUNCTION_URL", "\"${System.getenv("SUPABASE_EDGE_FUNCTION_URL") ?: ""}\"")
+    val resolvedSupabaseUrl = resolveConfigProperty("SUPABASE_URL")
+    val resolvedSupabasePublishableKey = resolveConfigProperty("SUPABASE_PUBLISHABLE_KEY")
+    val resolvedSupabaseEdgeFunctionUrl = resolveConfigProperty("SUPABASE_EDGE_FUNCTION_URL")
+
+    buildConfigField("String", "SUPABASE_URL", "\"$resolvedSupabaseUrl\"")
+    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$resolvedSupabasePublishableKey\"")
+    buildConfigField("String", "SUPABASE_EDGE_FUNCTION_URL", "\"$resolvedSupabaseEdgeFunctionUrl\"")
   }
 
 
@@ -123,47 +193,23 @@ val verifyReleasePreconditions = tasks.register("verifyReleasePreconditions") {
       errors.add("Missing or empty 'KEY_PASSWORD' environment variable.")
     }
 
-    // 5. .env file check
-    val envFile = File(rootDirPath, ".env")
-    if (!envFile.exists() || !envFile.isFile) {
-      errors.add("Missing root '.env' file. Production Release builds require a real '.env' file containing Production Supabase configuration.")
-    } else {
-      val envMap = mutableMapOf<String, String>()
-      for (line in envFile.readLines()) {
-        val trimmed = line.trim()
-        if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
-          val splitIndex = trimmed.indexOf('=')
-          if (splitIndex != -1) {
-            val key = trimmed.substring(0, splitIndex).trim()
-            val value = trimmed.substring(splitIndex + 1).trim().trim('"', '\'')
-            envMap[key] = value
-          }
-        }
-      }
+    // 5. Supabase configuration check
+    // Uses the exact same parser and priority resolution logic as buildConfigField
+    val currentEnvFile = File(rootDirPath, ".env")
+    val currentEnvMap = parseEnvFile(currentEnvFile)
 
-      val supabaseUrl = envMap["SUPABASE_URL"]
-      if (supabaseUrl.isNullOrBlank()) {
-        errors.add("Missing or empty 'SUPABASE_URL' in .env.")
-      } else if (supabaseUrl.contains("placeholder", ignoreCase = true)) {
-        errors.add("'SUPABASE_URL' in .env contains placeholder value.")
-      } else if (!supabaseUrl.startsWith("https://") && !supabaseUrl.startsWith("http://")) {
-        errors.add("'SUPABASE_URL' in .env must start with 'https://'.")
-      }
+    val currentSupabaseUrl = resolveConfigProperty("SUPABASE_URL", currentEnvMap)
+    val currentSupabaseKey = resolveConfigProperty("SUPABASE_PUBLISHABLE_KEY", currentEnvMap)
+    val currentSupabaseEdgeUrl = resolveConfigProperty("SUPABASE_EDGE_FUNCTION_URL", currentEnvMap)
 
-      val supabaseKey = envMap["SUPABASE_PUBLISHABLE_KEY"]
-      if (supabaseKey.isNullOrBlank()) {
-        errors.add("Missing or empty 'SUPABASE_PUBLISHABLE_KEY' in .env.")
-      } else if (supabaseKey.contains("placeholder", ignoreCase = true)) {
-        errors.add("'SUPABASE_PUBLISHABLE_KEY' in .env contains placeholder value.")
-      }
-
-      val supabaseEdgeUrl = envMap["SUPABASE_EDGE_FUNCTION_URL"]
-      if (supabaseEdgeUrl.isNullOrBlank()) {
-        errors.add("Missing or empty 'SUPABASE_EDGE_FUNCTION_URL' in .env.")
-      } else if (supabaseEdgeUrl.contains("placeholder", ignoreCase = true)) {
-        errors.add("'SUPABASE_EDGE_FUNCTION_URL' in .env contains placeholder value.")
-      }
-    }
+    errors.addAll(
+      validateSupabaseConfig(
+        supabaseUrl = currentSupabaseUrl,
+        supabaseKey = currentSupabaseKey,
+        supabaseEdgeUrl = currentSupabaseEdgeUrl,
+        hasEnvFile = currentEnvFile.exists() && currentEnvFile.isFile
+      )
+    )
 
     if (errors.isNotEmpty()) {
       val errorMessage = buildString {
