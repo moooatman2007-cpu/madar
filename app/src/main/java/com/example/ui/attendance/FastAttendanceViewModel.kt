@@ -138,12 +138,19 @@ class FastAttendanceViewModel(
                 _uiState.update { currentState ->
                     val combinedExtra = (currentState.extraSessionStudents + extraFromDb).distinctBy { it.studentId }
                     val combinedScope = (currentState.baseGroupStudents + combinedExtra).distinctBy { it.studentId }
+                    
+                    // Merge loaded attendance with potentially already scanned students
+                    val updatedPresent = (currentState.presentStudentIds + loadedPresent)
+                    val updatedAbsent = (currentState.absentStudentIds + loadedAbsent) - updatedPresent
+                    val updatedLate = (currentState.lateStudentIds + loadedLate)
+                    val updatedExcused = (currentState.excusedStudentIds + loadedExcused)
+                    
                     currentState.copy(
-                        presentStudentIds = loadedPresent,
-                        absentStudentIds = loadedAbsent,
-                        lateStudentIds = loadedLate,
-                        excusedStudentIds = loadedExcused,
-                        attendanceStatusMap = statusMap,
+                        presentStudentIds = updatedPresent,
+                        absentStudentIds = updatedAbsent,
+                        lateStudentIds = updatedLate,
+                        excusedStudentIds = updatedExcused,
+                        attendanceStatusMap = currentState.attendanceStatusMap + statusMap,
                         extraSessionStudents = combinedExtra,
                         allStudentsInScope = combinedScope,
                         isLoadingAttendance = false

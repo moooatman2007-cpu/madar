@@ -115,11 +115,11 @@ class MockAttendanceRepository : AttendanceRepository {
     ): Result<SyncResult<Attendance>> {
         var updatedAttendance: Attendance? = null
         _attendances.update { list ->
-            val existingIndex = list.indexOfFirst { it.studentId == studentId && it.date == date && (groupId == null || it.groupId == null || it.groupId == groupId) }
+            val existingIndex = list.indexOfFirst { it.studentId == studentId && it.date == date && it.groupId == groupId }
             if (existingIndex >= 0) {
                 val existing = list[existingIndex]
                 val modified = existing.copy(
-                    groupId = groupId ?: existing.groupId,
+                    groupId = groupId,
                     status = status,
                     note = note,
                     updatedAt = System.currentTimeMillis()
@@ -164,12 +164,12 @@ class MockAttendanceRepository : AttendanceRepository {
                     AttendanceStatus.LATE -> lateCount++
                     AttendanceStatus.EXCUSED -> excusedCount++
                 }
-                val existingIndex = updated.indexOfFirst { it.studentId == rec.studentId && it.date == date && (groupId == null || it.groupId == null || it.groupId == groupId) }
+                val existingIndex = updated.indexOfFirst { it.studentId == rec.studentId && it.date == date && it.groupId == groupId }
                 val existing = if (existingIndex >= 0) updated[existingIndex] else null
                 val item = Attendance(
                     attendanceId = existing?.attendanceId ?: "att_${rec.studentId}_$date${if (groupId != null) "_$groupId" else ""}",
                     studentId = rec.studentId,
-                    groupId = groupId ?: existing?.groupId,
+                    groupId = groupId,
                     date = date,
                     status = status,
                     note = rec.note,
@@ -209,7 +209,7 @@ class MockAttendanceRepository : AttendanceRepository {
     }
 
     override suspend fun getAttendanceForDateAndGroup(date: String, groupId: String?): List<Attendance> {
-        return _attendances.value.filter { it.date == date && (groupId == null || it.groupId == groupId || it.groupId == null) }
+        return _attendances.value.filter { it.date == date && it.groupId == groupId }
     }
 
     override fun getAllAttendanceForTeacher(): Flow<List<Attendance>> {

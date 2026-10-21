@@ -22,10 +22,11 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-    buildConfigField("String", "SUPABASE_URL", "\"https://example.supabase.co\"")
-    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummykey\"")
-    buildConfigField("String", "SUPABASE_EDGE_FUNCTION_URL", "\"https://example.supabase.co/functions/v1\"")
+    buildConfigField("String", "SUPABASE_URL", "\"${System.getenv("SUPABASE_URL") ?: ""}\"")
+    buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${System.getenv("SUPABASE_PUBLISHABLE_KEY") ?: ""}\"")
+    buildConfigField("String", "SUPABASE_EDGE_FUNCTION_URL", "\"${System.getenv("SUPABASE_EDGE_FUNCTION_URL") ?: ""}\"")
   }
+
 
   signingConfigs {
     val releaseKeystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"

@@ -36,7 +36,8 @@ data class StudentListUiState(
 class StudentListViewModel(
     savedStateHandle: SavedStateHandle? = null,
     private val studentRepository: StudentRepository = RepositoryProvider.studentRepository,
-    private val gradeRepository: GradeRepository = RepositoryProvider.gradeRepository
+    private val gradeRepository: GradeRepository = RepositoryProvider.gradeRepository,
+    private val defaultDispatcher: kotlinx.coroutines.CoroutineDispatcher = com.example.util.AppDispatchers.default
 ) : ViewModel() {
 
     private val initialGradeId: String? = savedStateHandle?.get<String>("gradeId")
@@ -96,8 +97,12 @@ class StudentListViewModel(
         }
 
         viewModelScope.launch {
+            val debouncedSearchQuery = _searchQuery.debounce { query ->
+                if (query.isEmpty()) 0L else 100L
+            }
+
             combine(
-                _searchQuery,
+                debouncedSearchQuery,
                 _selectedGradeId,
                 studentRepository.getStudents()
             ) { query, gradeId, allStudents ->
@@ -112,6 +117,7 @@ class StudentListViewModel(
                     matchesGrade && matchesQuery
                 }
             }
+            .flowOn(defaultDispatcher)
             .collect { studentsList ->
                 _uiState.update {
                     it.copy(
