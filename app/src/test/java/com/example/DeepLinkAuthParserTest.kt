@@ -91,4 +91,34 @@ class DeepLinkAuthParserTest {
         val result = DeepLinkAuthParser.parse(uri)
         assertEquals(DeepLinkAuthResult.Ignored, result)
     }
+
+    @Test
+    fun parse_pkceCodeRecovery_returnsCodeExchangeWithRecoveryType() {
+        val uri = Uri.parse("studentmanager://login-callback?code=084a7e93-547c-47bb-a9df-287702f2dd9d&type=recovery")
+        val result = DeepLinkAuthParser.parse(uri)
+        assertTrue(result is DeepLinkAuthResult.CodeExchange)
+        val codeExchange = result as DeepLinkAuthResult.CodeExchange
+        assertEquals("084a7e93-547c-47bb-a9df-287702f2dd9d", codeExchange.code)
+        assertEquals("recovery", codeExchange.type)
+    }
+
+    @Test
+    fun parse_tokenHashRecovery_returnsEmailOtpWithRecoveryType() {
+        val uri = Uri.parse("studentmanager://login-callback?token_hash=pkce_abc123xyz&type=recovery")
+        val result = DeepLinkAuthParser.parse(uri)
+        assertTrue(result is DeepLinkAuthResult.EmailOtp)
+        val emailOtp = result as DeepLinkAuthResult.EmailOtp
+        assertEquals("pkce_abc123xyz", emailOtp.tokenHash)
+        assertEquals("recovery", emailOtp.type)
+    }
+
+    @Test
+    fun parse_fragmentAccessTokenRecovery_returnsFragmentSessionWithRecoveryType() {
+        val uri = Uri.parse("studentmanager://login-callback#access_token=eyJhbGciOi...&refresh_token=abc&expires_in=3600&token_type=bearer&type=recovery")
+        val result = DeepLinkAuthParser.parse(uri)
+        assertTrue(result is DeepLinkAuthResult.FragmentSession)
+        val fragmentSession = result as DeepLinkAuthResult.FragmentSession
+        assertEquals("recovery", fragmentSession.type)
+    }
 }
+

@@ -54,6 +54,10 @@ fun ReportsScreen(
     var noPhoneStudentName by remember { mutableStateOf<String?>(null) }
     var isMonthlyReportMode by remember { mutableStateOf(false) }
 
+    LaunchedEffect(Unit) {
+        viewModel.refresh()
+    }
+
     LaunchedEffect(uiState.notificationMessage) {
         uiState.notificationMessage?.let { msg ->
             snackbarHostState.showSnackbar(msg)

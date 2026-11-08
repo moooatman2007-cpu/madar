@@ -16,6 +16,10 @@ class MockNotificationEventRepository : NotificationEventRepository {
         return NotificationWorkerResult.Success("Mock worker trigger success")
     }
 
+    override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> {
+        return Result.success(ApproveRecitationResult.Success("event_mock", recitationId))
+    }
+
     fun getCreatedEvents(): List<NotificationEvent> = createdEvents.toList()
     fun clear() = createdEvents.clear()
 }

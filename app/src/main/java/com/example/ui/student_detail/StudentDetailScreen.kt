@@ -273,15 +273,20 @@ fun StudentDetailScreen(
                                 )
                             }
                             StudentDetailTab.MONTHLY_REPORT -> {
+                                val context = androidx.compose.ui.platform.LocalContext.current
                                 MonthlyReportTab(
                                     student = student,
                                     monthNameAr = uiState.monthNameAr,
                                     performance = uiState.studentMonthlyPerformance,
                                     teacherNote = uiState.teacherMonthlyNote,
                                     isSavingNote = uiState.isSavingReportNote,
+                                    attendances = uiState.attendances,
+                                    recitations = uiState.recitations,
+                                    exams = uiState.exams,
                                     onNavigateMonth = viewModel::navigateMonth,
                                     onTeacherNoteChange = viewModel::onTeacherReportNoteChange,
-                                    onSaveReportNote = viewModel::saveMonthlyReportNote
+                                    onSaveReportNote = viewModel::saveMonthlyReportNote,
+                                    onPreviewPdf = { viewModel.generateAndPreviewMonthlyReportPdf(context) }
                                 )
                             }
                         }

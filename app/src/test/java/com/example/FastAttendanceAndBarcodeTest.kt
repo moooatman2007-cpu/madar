@@ -49,6 +49,7 @@ class FastAttendanceAndBarcodeTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        com.example.data.SupabaseClientProvider.mockTeacherId = "t1"
         gradeRepository = MockGradeRepository(initialStage = EducationalStages.SECONDARY)
         studentRepository = MockStudentRepository(gradeRepository = gradeRepository)
         attendanceRepository = MockAttendanceRepository()
@@ -57,6 +58,7 @@ class FastAttendanceAndBarcodeTest {
 
     @After
     fun tearDown() {
+        com.example.data.SupabaseClientProvider.mockTeacherId = null
         Dispatchers.resetMain()
     }
 
@@ -72,7 +74,7 @@ class FastAttendanceAndBarcodeTest {
         val largeStudentList = (1..100).map { i ->
             Student(
                 studentId = "std_100_$i",
-                teacherId = "teacher_test",
+                teacherId = "t1",
                 gradeId = targetGrade.id,
                 fullName = "طالب اختبار $i",
                 studentCode = String.format("STU%04d", i),
@@ -695,7 +697,7 @@ class FastAttendanceAndBarcodeTest {
         val students100 = (1..100).map { i ->
             Student(
                 studentId = "s_batch_$i",
-                teacherId = "teacher_batch",
+                teacherId = "t1",
                 gradeId = targetGrade.id,
                 fullName = "طالب دفعة $i",
                 studentCode = String.format("BTC%04d", i)

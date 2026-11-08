@@ -11,6 +11,8 @@ import com.example.core.model.SyncResult
 import com.example.core.model.SupabaseAttendanceDto
 import com.example.core.model.UpsertAttendanceRequest
 import com.example.data.SupabaseClientProvider
+import androidx.room.withTransaction
+import com.example.data.local.AppDatabase
 import com.example.data.local.DatabaseProvider
 import com.example.data.local.dao.AttendanceDao
 import com.example.data.local.dao.OutboxDao
@@ -49,7 +51,8 @@ import java.util.UUID
 class SupabaseAttendanceRepository(
     private val attendanceDao: AttendanceDao? = try { DatabaseProvider.getDatabase().attendanceDao() } catch (_: Exception) { null },
     private val outboxDao: OutboxDao? = try { DatabaseProvider.getDatabase().outboxDao() } catch (_: Exception) { null },
-    private val studentDao: com.example.data.local.dao.StudentDao? = try { DatabaseProvider.getDatabase().studentDao() } catch (_: Exception) { null }
+    private val studentDao: com.example.data.local.dao.StudentDao? = try { DatabaseProvider.getDatabase().studentDao() } catch (_: Exception) { null },
+    private val appDatabase: AppDatabase? = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
 ) : AttendanceRepository {
     private val client = SupabaseClientProvider.client
 
@@ -359,7 +362,7 @@ class SupabaseAttendanceRepository(
         }.flowOn(Dispatchers.IO)
     }
 
-    private fun isPermanentDatabaseError(e: Throwable): Boolean {
+    private fun isNonRetryableError(e: Throwable): Boolean {
         var current: Throwable? = e
         while (current != null) {
             val msg = current.message?.lowercase() ?: ""
@@ -371,11 +374,22 @@ class SupabaseAttendanceRepository(
                 msg.contains("23502") || // not_null_violation
                 msg.contains("42p01") || // undefined_table
                 msg.contains("42703") || // undefined_column
-                msg.contains("pgrst") && (msg.contains("400") || msg.contains("404") || msg.contains("422"))
+                msg.contains("401") ||   // unauthorized
+                msg.contains("403") ||   // forbidden
+                msg.contains("unauthorized") ||
+                msg.contains("forbidden") ||
+                msg.contains("jwt") ||
+                msg.contains("permission denied") ||
+                msg.contains("row-level security") ||
+                (msg.contains("pgrst") && (msg.contains("400") || msg.contains("401") || msg.contains("403") || msg.contains("404") || msg.contains("422")))
             ) {
                 return true
             }
             if (current is io.github.jan.supabase.exceptions.RestException) {
+                val status = current.statusCode
+                if (status in 400..499 && status != 408 && status != 429) {
+                    return true
+                }
                 val restError = current.error.lowercase()
                 val restDesc = current.description?.lowercase() ?: ""
                 val full = "$restError $restDesc"
@@ -384,7 +398,11 @@ class SupabaseAttendanceRepository(
                     full.contains("duplicate key value") ||
                     full.contains("23503") ||
                     full.contains("23505") ||
-                    full.contains("23502")
+                    full.contains("23502") ||
+                    full.contains("unauthorized") ||
+                    full.contains("forbidden") ||
+                    full.contains("permission denied") ||
+                    full.contains("row-level security")
                 ) {
                     return true
                 }
@@ -393,6 +411,8 @@ class SupabaseAttendanceRepository(
         }
         return false
     }
+
+    private fun isPermanentDatabaseError(e: Throwable): Boolean = isNonRetryableError(e)
 
     override suspend fun recordOrUpdateAttendance(
         studentId: String,
@@ -577,13 +597,15 @@ class SupabaseAttendanceRepository(
             lastCloudError = bulkEx
             android.util.Log.e("SupabaseAttendanceRepo", "Direct Postgrest bulk upsert failed (${bulkEx.javaClass.simpleName}: ${bulkEx.message})")
 
-            if (isPermanentDatabaseError(bulkEx)) {
+            if (isNonRetryableError(bulkEx)) {
                 val errorMsg = when {
                     bulkEx.message?.contains("violates foreign key", ignoreCase = true) == true ||
                     bulkEx.message?.contains("23503") == true -> "فشل الحفظ: تعارض في بيانات الطالب أو المجموعة المحددة (Foreign Key Violation)."
                     bulkEx.message?.contains("violates unique constraint", ignoreCase = true) == true ||
                     bulkEx.message?.contains("23505") == true -> "فشل الحفظ: يوجد سجل حضور مطابق مسجل مسبقاً لهذا الطالب والتاريخ."
-                    else -> "فشل دائم في حفظ السجلات في قاعدة البيانات: ${bulkEx.message}"
+                    bulkEx.message?.contains("401") == true || bulkEx.message?.contains("unauthorized", ignoreCase = true) == true -> "انتهت صلاحية الجلسة، يرجى إعادة تسجيل الدخول."
+                    bulkEx.message?.contains("403") == true || bulkEx.message?.contains("forbidden", ignoreCase = true) == true -> "ليس لديك صلاحية لتعديل سجلات الحضور الخاصة بهؤلاء الطلاب."
+                    else -> "فشل غير قابل لإعادة المحاولة في حفظ السجلات: ${bulkEx.message}"
                 }
                 return@withContext Result.failure(Exception(errorMsg, bulkEx))
             }
@@ -617,8 +639,20 @@ class SupabaseAttendanceRepository(
             }
             Result.success(batchResult)
         } else {
-            // Offline fallback: store directly in Room and Outbox with ZERO network calls in loop
+            // Offline fallback: store directly in Room and Outbox with atomic transaction and ZERO network calls in loop
             val cloudException = lastCloudError ?: Exception("Unknown cloud error")
+            
+            val db = appDatabase ?: try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+            val attDao = attendanceDao ?: db?.attendanceDao()
+            val outDao = outboxDao ?: db?.outboxDao()
+
+            if (db == null || attDao == null || outDao == null) {
+                val cloudMsg = cloudException.message ?: "تعذر الاتصال بالسيرفر"
+                return@withContext Result.failure(
+                    Exception("فشل الحفظ: تعذر الاتصال بالسيرفر ($cloudMsg) وقاعدة البيانات المحلية أو DAO غير متاحة للمزامنة.")
+                )
+            }
+
             try {
                 var presentCount = 0
                 var absentCount = 0
@@ -674,14 +708,32 @@ class SupabaseAttendanceRepository(
                     )
                 }
 
-                attendanceDao?.upsertAttendance(entities)
-                outboxDao?.insertOperations(outboxOps)
-                OutboxSyncScheduler.scheduleSync()
+                db.withTransaction {
+                    attDao.upsertAttendance(entities)
+                    outDao.insertOperations(outboxOps)
+                }
 
-                Result.failure(Exception("فشل الحفظ المباشر على السحابة: ${cloudException.message ?: "تعذر الاتصال بالسيرفر"}. تم حفظ السجلات محلياً في قائمة الانتظار للمزامنة."))
+                try {
+                    OutboxSyncScheduler.scheduleSync()
+                } catch (schedEx: Exception) {
+                    if (schedEx is kotlinx.coroutines.CancellationException) throw schedEx
+                    android.util.Log.w("SupabaseAttendanceRepo", "WorkManager scheduling failed after offline Room transaction success: ${schedEx.message}")
+                }
+
+                val offlineBatchResult = BatchAttendanceResult(
+                    total = records.size,
+                    presentCount = presentCount,
+                    absentCount = absentCount,
+                    lateCount = lateCount,
+                    excusedCount = excusedCount,
+                    date = date,
+                    syncStatus = BatchSyncStatus.QUEUED_OFFLINE
+                )
+                Result.success(offlineBatchResult)
             } catch (ex: Exception) {
+                if (ex is kotlinx.coroutines.CancellationException) throw ex
                 ex.printStackTrace()
-                Result.failure(Exception("فشل حفظ الحضور: ${ex.message}"))
+                Result.failure(Exception("فشل حفظ الحضور محلياً: ${ex.message}", ex))
             }
         }
     }

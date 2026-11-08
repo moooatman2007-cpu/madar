@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 sealed interface AuthFeedbackEvent {
     data class Success(val message: String) : AuthFeedbackEvent
     data class Error(val message: String) : AuthFeedbackEvent
+    data object PasswordRecovery : AuthFeedbackEvent
 }
 
 object AuthFeedbackBus {
@@ -19,6 +20,10 @@ object AuthFeedbackBus {
 
     fun emitError(message: String) {
         _events.tryEmit(AuthFeedbackEvent.Error(message))
+    }
+
+    fun emitPasswordRecovery() {
+        _events.tryEmit(AuthFeedbackEvent.PasswordRecovery)
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

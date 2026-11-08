@@ -4,8 +4,11 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -19,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
@@ -60,18 +64,34 @@ fun MainAppNavigation(
 
     val sessionStatus by SupabaseClientProvider.client.auth.sessionStatus.collectAsState()
 
+    LaunchedEffect(Unit) {
+        com.example.data.auth.AuthFeedbackBus.events.collect { event ->
+            if (event is com.example.data.auth.AuthFeedbackEvent.PasswordRecovery) {
+                navController.navigate(Screen.ResetPassword.route) {
+                    popUpTo(Screen.Auth.route) { inclusive = false }
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
+
     LaunchedEffect(sessionStatus) {
         if (sessionStatus is SessionStatus.NotAuthenticated) {
             // First: stop sync and reset in-memory state. Local data/outbox are intentionally KEPT
             // (they are tenant-scoped and will sync after the same teacher signs in again).
             AccountSessionManager.onSessionTerminated()
             // Second: ONLY after teardown completes, navigate to Auth
-            if (currentDestination != null && currentDestination != Screen.Auth.route) {
+            if (currentDestination != null && currentDestination != Screen.Auth.route && currentDestination != Screen.ResetPassword.route) {
                 navController.navigate(Screen.Auth.route) {
                     popUpTo(0) { inclusive = true }
                 }
             }
         } else if (sessionStatus is SessionStatus.Authenticated) {
+            if (currentDestination == Screen.ResetPassword.route) {
+                // In password recovery mode, user is entering new password on ResetPasswordScreen.
+                // Do NOT redirect away to Home or StatusScreen.
+                return@LaunchedEffect
+            }
             val user = try { SupabaseClientProvider.client.auth.currentUserOrNull() } catch (_: Exception) { null }
             if (user != null) {
                 AccountSessionManager.setActiveTeacherId(user.id)
@@ -86,12 +106,39 @@ fun MainAppNavigation(
                                 popUpTo(0) { inclusive = true }
                             }
                         }
+                    } else {
+                        if (currentDestination == null || currentDestination == Screen.Auth.route) {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Auth.route) { inclusive = true }
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    // Gracefully ignore network exceptions on launch
+                    // On network failure or failure to fetch teacher record, do NOT grant access to Home!
+                    // Treat as pending / verification required until successfully verified as active.
+                    if (currentDestination == null || !currentDestination.startsWith("status/")) {
+                        navController.navigate("status/pending") {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (sessionStatus is SessionStatus.Initializing) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("app_initializing_indicator")
+            )
+        }
+        return
     }
 
     val bottomTabs = listOf(
@@ -163,9 +210,13 @@ fun MainAppNavigation(
             }
         }
     ) { innerPadding ->
+        val initialStartRoute = remember {
+            Screen.Auth.route
+        }
+
         NavHost(
             navController = navController,
-            startDestination = Screen.Auth.route,
+            startDestination = initialStartRoute,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
@@ -200,6 +251,22 @@ fun MainAppNavigation(
                         }
                     }
                 })
+            }
+
+            // Reset Password Screen
+            composable(Screen.ResetPassword.route) {
+                com.example.ui.auth.ResetPasswordScreen(
+                    onSuccess = {
+                        navController.navigate(Screen.Auth.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
+                    onBackToLogin = {
+                        navController.navigate(Screen.Auth.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                )
             }
 
             // Home Destination

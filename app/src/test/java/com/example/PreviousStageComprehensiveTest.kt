@@ -71,7 +71,8 @@ class PreviousStageComprehensiveTest {
 
         val viewModel = StudentListViewModel(
             studentRepository = studentRepository,
-            gradeRepository = gradeRepository
+            gradeRepository = gradeRepository,
+            defaultDispatcher = testDispatcher
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -113,7 +114,8 @@ class PreviousStageComprehensiveTest {
         // 3. Open StudentListViewModel
         val viewModel = StudentListViewModel(
             studentRepository = studentRepository,
-            gradeRepository = gradeRepository
+            gradeRepository = gradeRepository,
+            defaultDispatcher = testDispatcher
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -174,7 +176,8 @@ class PreviousStageComprehensiveTest {
 
         val viewModel = StudentListViewModel(
             studentRepository = studentRepository,
-            gradeRepository = gradeRepository
+            gradeRepository = gradeRepository,
+            defaultDispatcher = testDispatcher
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -218,7 +221,8 @@ class PreviousStageComprehensiveTest {
 
         val viewModel = StudentListViewModel(
             studentRepository = studentRepository,
-            gradeRepository = gradeRepository
+            gradeRepository = gradeRepository,
+            defaultDispatcher = testDispatcher
         )
         testDispatcher.scheduler.advanceUntilIdle()
 

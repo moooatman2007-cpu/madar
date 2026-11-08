@@ -32,6 +32,7 @@ import com.example.data.repository.NotificationEventRepository
 import com.example.data.repository.StudentRepository
 import io.github.jan.supabase.auth.auth
 import com.example.util.DateUtils
+import android.content.Context
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -663,26 +664,6 @@ class StudentDetailViewModel(
                     if (result.isSuccess) {
                         closeRecitationDialog()
                         val syncRes = result.getOrNull()
-                        if (syncRes?.syncStatus == BatchSyncStatus.SAVED_TO_CLOUD) {
-                            val recitation = syncRes.data
-                            val recitationId = recitation?.recitationId ?: ""
-                            val teacherId = _uiState.value.student?.teacherId ?: com.example.data.SupabaseClientProvider.mockTeacherId ?: com.example.data.SupabaseClientProvider.client.auth.currentUserOrNull()?.id ?: ""
-                            if (recitationId.isNotBlank() && teacherId.isNotBlank()) {
-                                try {
-                                    val event = NotificationEvent.Recitation(
-                                        teacherId = teacherId,
-                                        studentId = studentId,
-                                        recitationId = recitationId
-                                    )
-                                    val creationRes = notificationEventRepository.createNotificationEvent(event)
-                                    if (creationRes is NotificationEventCreationResult.Created || creationRes is NotificationEventCreationResult.AlreadyExists) {
-                                        notificationEventRepository.triggerNotificationWorker("RECITATION")
-                                    }
-                                } catch (e: Exception) {
-                                    android.util.Log.e("StudentDetailViewModel", "Failed to create recitation notification: ${e.javaClass.simpleName}")
-                                }
-                            }
-                        }
                         val msg = if (syncRes?.syncStatus == BatchSyncStatus.QUEUED_OFFLINE) {
                             "تم حفظ التسميع محلياً وسيتم المزامنة عند توفر الاتصال 📡"
                         } else {
@@ -913,6 +894,50 @@ class StudentDetailViewModel(
             } else {
                 val errorMsg = result.exceptionOrNull()?.message ?: "تعذر حفظ التقرير الشهري"
                 _events.emit(StudentDetailEvent.ShowMessage(errorMsg))
+            }
+        }
+    }
+
+    fun generateAndPreviewMonthlyReportPdf(context: Context) {
+        val student = _uiState.value.student ?: return
+        val performance = _uiState.value.studentMonthlyPerformance
+        val year = _uiState.value.selectedYear
+        val month = _uiState.value.selectedMonth
+        val monthName = _uiState.value.monthNameAr
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSavingReportNote = true) }
+            try {
+                val pdfData = com.example.util.MonthlyReportPdfData(
+                    student = student,
+                    month = month,
+                    year = year,
+                    monthNameAr = monthName,
+                    attendanceRate = performance?.attendanceSummary?.attendanceRate ?: 0f,
+                    attendancePresent = performance?.attendanceSummary?.presentCount ?: 0,
+                    attendanceAbsent = performance?.attendanceSummary?.absentCount ?: 0,
+                    attendanceTotal = (performance?.attendanceSummary?.presentCount ?: 0) + (performance?.attendanceSummary?.absentCount ?: 0),
+                    absenceList = _uiState.value.attendances.filter { it.status == com.example.core.model.AttendanceStatus.ABSENT },
+                    recitationAverage = performance?.recitationSummary?.averagePercentage,
+                    recitationCount = performance?.recitationSummary?.totalCount ?: 0,
+                    recitationList = _uiState.value.recitations,
+                    examAverage = performance?.examSummary?.averagePercentage,
+                    examCount = performance?.examSummary?.totalCount ?: 0,
+                    examList = _uiState.value.exams,
+                    teacherNote = _uiState.value.teacherMonthlyNote.ifBlank { performance?.teacherNote }
+                )
+
+                val file = com.example.util.MonthlyReportPdfExporter.generateMonthlyReportPdf(context, pdfData)
+                if (file != null && file.exists()) {
+                    com.example.util.MonthlyReportPdfExporter.openPdf(context, file)
+                    _events.emit(StudentDetailEvent.ShowMessage("تم تجهيز وفتح معاينة التقرير الشهري PDF 📄"))
+                } else {
+                    _events.emit(StudentDetailEvent.ShowMessage("تعذر إنشاء ملف PDF للتقرير الشهري"))
+                }
+            } catch (e: Exception) {
+                _events.emit(StudentDetailEvent.ShowMessage("حدث خطأ أثناء إنشاء PDF: ${e.message}"))
+            } finally {
+                _uiState.update { it.copy(isSavingReportNote = false) }
             }
         }
     }

@@ -3,9 +3,9 @@ package com.example.data.auth
 import android.net.Uri
 
 sealed interface DeepLinkAuthResult {
-    data class CodeExchange(val code: String) : DeepLinkAuthResult
+    data class CodeExchange(val code: String, val type: String = "signup") : DeepLinkAuthResult
     data class EmailOtp(val tokenHash: String, val type: String) : DeepLinkAuthResult
-    data class FragmentSession(val fragment: String) : DeepLinkAuthResult
+    data class FragmentSession(val fragment: String, val type: String = "signup") : DeepLinkAuthResult
     data class AuthError(val errorCode: String?, val errorDescription: String) : DeepLinkAuthResult
     data object Ignored : DeepLinkAuthResult
 }
@@ -32,11 +32,16 @@ object DeepLinkAuthParser {
         var errorDescription = uri.getQueryParameter("error_description")
 
         val fragment = uri.fragment
-        if (error.isNullOrBlank() && errorDescription.isNullOrBlank() && !fragment.isNullOrBlank()) {
-            val fragmentParams = fragment.split("&").associate {
+        val fragmentParams = if (!fragment.isNullOrBlank()) {
+            fragment.split("&").associate {
                 val parts = it.split("=", limit = 2)
                 if (parts.size == 2) parts[0] to Uri.decode(parts[1]) else parts[0] to ""
             }
+        } else {
+            emptyMap()
+        }
+
+        if (error.isNullOrBlank() && errorDescription.isNullOrBlank() && fragmentParams.isNotEmpty()) {
             error = fragmentParams["error"]
             errorDescription = fragmentParams["error_description"]
         }
@@ -49,25 +54,30 @@ object DeepLinkAuthParser {
             )
         }
 
+        // Check for type param across query or fragment
+        val rawType = uri.getQueryParameter("type")
+            ?: uri.getQueryParameter("flow")
+            ?: fragmentParams["type"]
+            ?: "signup"
+
         // 2. Check for PKCE 'code' query param
         val code = uri.getQueryParameter("code")
         if (!code.isNullOrBlank()) {
-            return DeepLinkAuthResult.CodeExchange(code = code)
+            return DeepLinkAuthResult.CodeExchange(code = code, type = rawType)
         }
 
         // 3. Check for Email OTP confirmation tokens (token_hash or token)
         val tokenHash = uri.getQueryParameter("token_hash") ?: uri.getQueryParameter("token")
-        val type = uri.getQueryParameter("type") ?: "signup"
         if (!tokenHash.isNullOrBlank()) {
             return DeepLinkAuthResult.EmailOtp(
                 tokenHash = tokenHash,
-                type = type
+                type = rawType
             )
         }
 
         // 4. Check for implicit fragment (#access_token=...&refresh_token=...)
         if (!fragment.isNullOrBlank() && fragment.contains("access_token")) {
-            return DeepLinkAuthResult.FragmentSession(fragment = fragment)
+            return DeepLinkAuthResult.FragmentSession(fragment = fragment, type = rawType)
         }
 
         return DeepLinkAuthResult.Ignored

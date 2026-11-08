@@ -1,6 +1,10 @@
 package com.example.data
 
+import android.content.Context
+import android.util.Log
 import com.example.BuildConfig
+import com.russhwolf.settings.Settings
+import com.russhwolf.settings.SharedPreferencesSettings
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.auth.Auth
@@ -10,6 +14,30 @@ import io.github.jan.supabase.serializer.KotlinXSerializer
 import kotlinx.serialization.json.Json
 
 object SupabaseClientProvider {
+    @Volatile
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    private fun getSettings(): Settings? {
+        val ctx = appContext ?: try {
+            com.example.data.local.DatabaseProvider.context
+        } catch (_: Throwable) {
+            null
+        }
+        return ctx?.let {
+            try {
+                val prefs = it.getSharedPreferences("supabase_session", Context.MODE_PRIVATE)
+                SharedPreferencesSettings(prefs)
+            } catch (t: Throwable) {
+                Log.e("SupabaseClient", "Failed to create SharedPreferencesSettings", t)
+                null
+            }
+        }
+    }
+
     @Volatile
     private var _mockTeacherId: String? = null
 
@@ -108,17 +136,25 @@ object SupabaseClientProvider {
                 scheme = "studentmanager"
                 host = "login-callback"
                 defaultRedirectUrl = "studentmanager://login-callback"
-                sessionManager = try {
-                    io.github.jan.supabase.auth.SettingsSessionManager()
-                } catch (t: Throwable) {
-                    // Not silent: without persistent storage the user is logged out on every restart.
-                    android.util.Log.e("SupabaseClient", "Persistent session storage unavailable, using memory", t)
-                    io.github.jan.supabase.auth.MemorySessionManager()
+                val customSettings = getSettings()
+                sessionManager = if (customSettings != null) {
+                    io.github.jan.supabase.auth.SettingsSessionManager(customSettings)
+                } else {
+                    try {
+                        io.github.jan.supabase.auth.SettingsSessionManager()
+                    } catch (t: Throwable) {
+                        Log.e("SupabaseClient", "Persistent session storage unavailable, using memory", t)
+                        io.github.jan.supabase.auth.MemorySessionManager()
+                    }
                 }
-                codeVerifierCache = try {
-                    io.github.jan.supabase.auth.SettingsCodeVerifierCache()
-                } catch (_: Throwable) {
-                    io.github.jan.supabase.auth.MemoryCodeVerifierCache()
+                codeVerifierCache = if (customSettings != null) {
+                    io.github.jan.supabase.auth.SettingsCodeVerifierCache(customSettings)
+                } else {
+                    try {
+                        io.github.jan.supabase.auth.SettingsCodeVerifierCache()
+                    } catch (_: Throwable) {
+                        io.github.jan.supabase.auth.MemoryCodeVerifierCache()
+                    }
                 }
             }
             install(Postgrest)

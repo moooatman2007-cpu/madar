@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import com.example.core.model.AbsenceNotificationEventInsertDto
+import com.example.core.model.ApproveRecitationResultDto
 import com.example.core.model.ExamNotificationEventInsertDto
 import com.example.core.model.HomeworkNotificationEventInsertDto
 import com.example.core.model.MonthlyReportNotificationEventInsertDto
@@ -19,6 +20,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Production implementation of NotificationEventRepository communicating directly
@@ -119,6 +122,31 @@ class SupabaseNotificationEventRepository(
                     message = "فشل إنشاء حدث الإشعار: ${e.message ?: "خطأ غير معروف"}"
                 )
             }
+        }
+    }
+
+    override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> = withContext(Dispatchers.IO) {
+        try {
+            val params = buildJsonObject { put("p_recitation_id", recitationId) }
+            val response = client.postgrest.rpc("approve_recitation_notification", parameters = params)
+                .decodeSingle<ApproveRecitationResultDto>()
+            
+            if (response.success) {
+                Result.success(ApproveRecitationResult.Success(
+                    response.eventId ?: "",
+                    response.recitationId ?: recitationId
+                ))
+            } else if (response.alreadyApproved) {
+                Result.success(ApproveRecitationResult.AlreadyApproved(
+                    response.eventId ?: "",
+                    response.recitationId ?: recitationId
+                ))
+            } else {
+                Result.failure(Exception(response.status ?: "فشل اعتماد التسميع"))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(Exception("فشل اعتماد التسميع: ${e.message}", e))
         }
     }
 

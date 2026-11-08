@@ -149,6 +149,10 @@ class AuthViewModel : ViewModel() {
                         _successMessage.value = null
                         _errorMessage.value = event.message
                     }
+                    is AuthFeedbackEvent.PasswordRecovery -> {
+                        _errorMessage.value = null
+                        _authState.value = AuthState.LoggedOut
+                    }
                 }
             }
         }
@@ -157,6 +161,9 @@ class AuthViewModel : ViewModel() {
     fun checkSession() {
         viewModelScope.launch {
             try {
+                kotlinx.coroutines.withTimeoutOrNull(3000) {
+                    SupabaseClientProvider.client.auth.awaitInitialization()
+                }
                 val session = SupabaseClientProvider.client.auth.currentSessionOrNull()
                 val user = SupabaseClientProvider.client.auth.currentUserOrNull()
                 if (session != null && user != null) {
@@ -350,9 +357,9 @@ class AuthViewModel : ViewModel() {
             try {
                 SupabaseClientProvider.client.auth.resetPasswordForEmail(
                     email = emailInput.trim(),
-                    redirectUrl = "studentmanager://login-callback"
+                    redirectUrl = "studentmanager://login-callback?type=recovery"
                 )
-                _successMessage.value = "تم إرسال رابط إعادة ضبط كلمة المرور إلى بريدك الإلكتروني بنجاح"
+                _successMessage.value = "إذا كان هذا البريد مسجلاً في النظام، فستصلك رسالة تحتوي على رابط لإعادة تعيين كلمة المرور."
             } catch (e: Exception) {
                 SafeAuthLogger.logAuthError("AuthViewModel", "resetPassword", e)
                 _errorMessage.value = SafeAuthErrorMapper.getArabicErrorMessage(e, AuthActionContext.RESET_PASSWORD)
@@ -384,6 +391,7 @@ fun AuthScreen(
     // Reset password dialog state
     var showResetDialog by remember { mutableStateOf(false) }
     var resetEmailInput by remember { mutableStateOf("") }
+    var resetEmailError by remember { mutableStateOf<String?>(null) }
 
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
@@ -512,42 +520,77 @@ fun AuthScreen(
         // Reset Password Dialog
         if (showResetDialog) {
             AlertDialog(
-                onDismissRequest = { showResetDialog = false },
+                onDismissRequest = {
+                    showResetDialog = false
+                    resetEmailError = null
+                },
                 title = { Text("استعادة كلمة المرور", fontWeight = FontWeight.Bold) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("أدخل بريدك الإلكتروني لإرسال رابط إعادة ضبط كلمة المرور:")
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "أدخل بريدك الإلكتروني المسجل لإرسال رابط إعادة ضبط كلمة المرور:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                         OutlinedTextField(
                             value = resetEmailInput,
-                            onValueChange = { resetEmailInput = it },
+                            onValueChange = {
+                                resetEmailInput = it
+                                resetEmailError = null
+                            },
                             label = { Text("البريد الإلكتروني") },
+                            placeholder = { Text("teacher@example.com") },
                             leadingIcon = { Icon(Icons.Outlined.Email, contentDescription = null, tint = MidarBlue) },
                             singleLine = true,
+                            isError = resetEmailError != null,
                             shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("reset_password_email_input")
                         )
+                        if (resetEmailError != null) {
+                            Text(
+                                text = resetEmailError ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 },
                 confirmButton = {
                     Button(
                         onClick = {
-                            if (resetEmailInput.isNotBlank()) {
-                                viewModel.resetPassword(resetEmailInput)
+                            val trimmed = resetEmailInput.trim()
+                            val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+                            if (trimmed.isBlank()) {
+                                resetEmailError = "يرجى كتابة البريد الإلكتروني"
+                            } else if (!emailRegex.matches(trimmed)) {
+                                resetEmailError = "صيغة البريد الإلكتروني غير صحيحة (مثال: teacher@example.com)"
+                            } else {
+                                viewModel.resetPassword(trimmed)
                                 showResetDialog = false
+                                resetEmailError = null
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = MidarBlue),
                         shape = RoundedCornerShape(12.dp),
-                        enabled = resetEmailInput.isNotBlank() && !isLoading
+                        enabled = resetEmailInput.isNotBlank() && !isLoading,
+                        modifier = Modifier.testTag("reset_password_submit_btn")
                     ) {
                         Text("إرسال الرابط", fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showResetDialog = false }) {
+                    TextButton(
+                        onClick = {
+                            showResetDialog = false
+                            resetEmailError = null
+                        },
+                        modifier = Modifier.testTag("reset_password_cancel_btn")
+                    ) {
                         Text("إلغاء", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
+                },
+                modifier = Modifier.testTag("reset_password_dialog")
             )
         }
     }

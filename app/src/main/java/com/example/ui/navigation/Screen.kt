@@ -52,6 +52,7 @@ sealed class Screen(val route: String) {
     data object EditGroup : Screen("edit_group/{groupId}") {
         fun createRoute(groupId: String): String = "edit_group/$groupId"
     }
+    data object ResetPassword : Screen("reset_password")
 }
 
 enum class BottomNavTab(

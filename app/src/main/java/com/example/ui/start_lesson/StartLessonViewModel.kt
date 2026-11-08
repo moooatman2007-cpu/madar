@@ -800,56 +800,65 @@ class StartLessonViewModel(
                 val results = coroutineScope {
                     eligibleItems.map { item ->
                         async(Dispatchers.IO) {
-                            val domainEvent: NotificationEvent = when (item.eventType) {
-                                NotificationEventType.ABSENCE -> NotificationEvent.Absence(
-                                    teacherId = "",
-                                    studentId = item.studentId,
-                                    attendanceId = item.sourceId
-                                )
-                                NotificationEventType.RECITATION -> NotificationEvent.Recitation(
-                                    teacherId = "",
-                                    studentId = item.studentId,
-                                    recitationId = item.sourceId
-                                )
-                                NotificationEventType.HOMEWORK -> NotificationEvent.Homework(
-                                    teacherId = "",
-                                    studentId = item.studentId,
-                                    homeworkId = item.sourceId
-                                )
-                                NotificationEventType.EXAM -> NotificationEvent.Exam(
-                                    teacherId = "",
-                                    studentId = item.studentId,
-                                    examId = item.sourceId
-                                )
-                                NotificationEventType.MONTHLY_REPORT -> NotificationEvent.MonthlyReport(
-                                    teacherId = "",
-                                    studentId = item.studentId,
-                                    monthlyReportId = item.sourceId
-                                )
+                            if (item.eventType == NotificationEventType.RECITATION) {
+                                Pair(item, notificationEventRepository.approveRecitation(item.sourceId))
+                            } else {
+                                val domainEvent: NotificationEvent = when (item.eventType) {
+                                    NotificationEventType.ABSENCE -> NotificationEvent.Absence(
+                                        teacherId = "",
+                                        studentId = item.studentId,
+                                        attendanceId = item.sourceId
+                                    )
+                                    NotificationEventType.HOMEWORK -> NotificationEvent.Homework(
+                                        teacherId = "",
+                                        studentId = item.studentId,
+                                        homeworkId = item.sourceId
+                                    )
+                                    NotificationEventType.EXAM -> NotificationEvent.Exam(
+                                        teacherId = "",
+                                        studentId = item.studentId,
+                                        examId = item.sourceId
+                                    )
+                                    NotificationEventType.MONTHLY_REPORT -> NotificationEvent.MonthlyReport(
+                                        teacherId = "",
+                                        studentId = item.studentId,
+                                        monthlyReportId = item.sourceId
+                                    )
+                                    else -> throw IllegalArgumentException("Unsupported event type: ${item.eventType}")
+                                }
+                                Pair(item, notificationEventRepository.createNotificationEvent(domainEvent))
                             }
-                            Pair(item, notificationEventRepository.createNotificationEvent(domainEvent))
                         }
                     }.awaitAll()
                 }
 
                 for ((item, result) in results) {
-                    when (result) {
-                        is NotificationEventCreationResult.Created -> {
+                    if (item.eventType == NotificationEventType.RECITATION) {
+                        if ((result as Result<*>).isSuccess) {
                             createdCount++
-                        }
-                        is NotificationEventCreationResult.AlreadyExists -> {
-                            alreadyExistsCount++
-                        }
-                        is NotificationEventCreationResult.Failed -> {
+                        } else {
                             failedCount++
-                            failedList.add(
-                                FailedNotificationItem(
-                                    studentId = item.studentId,
-                                    sourceId = item.sourceId,
-                                    eventType = item.eventType,
-                                    message = result.message
+                            failedList.add(FailedNotificationItem(item.studentId, item.sourceId, item.eventType, (result as Result<*>).exceptionOrNull()?.message ?: "فشل"))
+                        }
+                    } else {
+                        when (result) {
+                            is NotificationEventCreationResult.Created -> {
+                                createdCount++
+                            }
+                            is NotificationEventCreationResult.AlreadyExists -> {
+                                alreadyExistsCount++
+                            }
+                            is NotificationEventCreationResult.Failed -> {
+                                failedCount++
+                                failedList.add(
+                                    FailedNotificationItem(
+                                        studentId = item.studentId,
+                                        sourceId = item.sourceId,
+                                        eventType = item.eventType,
+                                        message = result.message
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }

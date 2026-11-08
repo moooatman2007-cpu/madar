@@ -69,7 +69,7 @@ class F03DataIntegrityTest {
 
         studentRepository = SupabaseStudentRepository(studentDao, outboxDao)
         recitationRepository = SupabaseRecitationRepository(recitationDao, outboxDao)
-        attendanceRepository = SupabaseAttendanceRepository(attendanceDao, outboxDao)
+        attendanceRepository = SupabaseAttendanceRepository(attendanceDao, outboxDao, appDatabase = db)
         examRepository = SupabaseExamRepository(examDao, outboxDao)
         paymentRepository = SupabasePaymentRepository(paymentDao, outboxDao)
         gradeRepository = SupabaseGradeRepository(gradeDao, outboxDao)
@@ -248,7 +248,8 @@ class F03DataIntegrityTest {
             BatchAttendanceItemDto(studentId = "st_2", status = "ABSENT", note = "Ill")
         )
         val result = attendanceRepository.recordBatchAttendance("2026-09-23", items)
-        assertTrue(result.isFailure)
+        assertTrue(result.isSuccess)
+        assertEquals(BatchSyncStatus.QUEUED_OFFLINE, result.getOrNull()?.syncStatus)
 
         // Individual attendance written to Room and Outbox via recordOrUpdateAttendance fallback
         val pending = outboxDao.getPendingOperations()

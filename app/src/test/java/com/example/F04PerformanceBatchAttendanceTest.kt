@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.BatchAttendanceItemDto
+import com.example.core.model.BatchSyncStatus
 import com.example.data.SupabaseClientProvider
 import com.example.data.local.AppDatabase
 import com.example.data.local.dao.AttendanceDao
@@ -39,7 +40,7 @@ class F04PerformanceBatchAttendanceTest {
         outboxDao = db.outboxDao()
 
         SupabaseClientProvider.mockTeacherId = "teacher_perf_test"
-        attendanceRepository = SupabaseAttendanceRepository(attendanceDao, outboxDao)
+        attendanceRepository = SupabaseAttendanceRepository(attendanceDao, outboxDao, appDatabase = db)
     }
 
     @After
@@ -65,7 +66,8 @@ class F04PerformanceBatchAttendanceTest {
 
         val duration = measureTimeMillis {
             val result = attendanceRepository.recordBatchAttendance(date, items)
-            assertTrue(result.isFailure)
+            assertTrue(result.isSuccess)
+            assertEquals(BatchSyncStatus.QUEUED_OFFLINE, result.getOrNull()?.syncStatus)
         }
 
         // Must complete very quickly (< 1000ms) without waiting for 30 sequential network timeouts
@@ -102,7 +104,8 @@ class F04PerformanceBatchAttendanceTest {
 
         val duration = measureTimeMillis {
             val result = attendanceRepository.recordBatchAttendance(date, items)
-            assertTrue(result.isFailure)
+            assertTrue(result.isSuccess)
+            assertEquals(BatchSyncStatus.QUEUED_OFFLINE, result.getOrNull()?.syncStatus)
         }
 
         // Must complete quickly without 100 sequential timeouts
@@ -137,7 +140,8 @@ class F04PerformanceBatchAttendanceTest {
 
         val duration = measureTimeMillis {
             val result = attendanceRepository.recordBatchAttendance(date, items)
-            assertTrue(result.isFailure)
+            assertTrue(result.isSuccess)
+            assertEquals(BatchSyncStatus.QUEUED_OFFLINE, result.getOrNull()?.syncStatus)
         }
 
         // Must complete without 500 network timeouts
@@ -167,7 +171,8 @@ class F04PerformanceBatchAttendanceTest {
         )
 
         val result = attendanceRepository.recordBatchAttendance(date, items)
-        assertTrue(result.isFailure)
+        assertTrue(result.isSuccess)
+        assertEquals(BatchSyncStatus.QUEUED_OFFLINE, result.getOrNull()?.syncStatus)
 
         // Verify teacher_perf_test sees the data
         val outboxOwn = outboxDao.getPendingOperationsForTeacher("teacher_perf_test")

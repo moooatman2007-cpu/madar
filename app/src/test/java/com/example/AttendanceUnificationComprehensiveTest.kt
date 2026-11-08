@@ -64,6 +64,10 @@ class AttendanceUnificationComprehensiveTest {
         override suspend fun triggerNotificationWorker(eventType: String?): NotificationWorkerResult {
             return NotificationWorkerResult.Success("OK")
         }
+
+        override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> {
+            return Result.success(ApproveRecitationResult.Success("event_mock", recitationId))
+        }
     }
 
     @Before

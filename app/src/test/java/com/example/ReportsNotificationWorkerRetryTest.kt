@@ -14,6 +14,7 @@ import com.example.data.repository.MockRecitationRepository
 import com.example.data.repository.MockStudentRepository
 import com.example.data.repository.MockTeacherRepository
 import com.example.ui.reports.NotificationBatchSummary
+import com.example.data.repository.ApproveRecitationResult
 import com.example.data.repository.NotificationEventCreationResult
 import com.example.data.repository.NotificationEventRepository
 import com.example.data.repository.NotificationWorkerResult
@@ -77,6 +78,10 @@ class ReportsNotificationWorkerRetryTest {
         override suspend fun triggerNotificationWorker(eventType: String?): NotificationWorkerResult {
             workerTriggerCount.incrementAndGet()
             return workerResultBuilder()
+        }
+
+        override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> {
+            return Result.success(ApproveRecitationResult.Success("event_mock", recitationId))
         }
     }
 

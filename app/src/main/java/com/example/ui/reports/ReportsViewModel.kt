@@ -270,12 +270,28 @@ class ReportsViewModel(
 
     init {
         loadData()
+        refresh()
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            val teacher = teacherRepository.fetchCurrentTeacher()
+            val teacherId = teacher?.id ?: ""
+            if (teacherId.isNotEmpty()) {
+                groupRepository.refreshGroups(teacherId)
+                gradeRepository.refreshGrades(teacher?.educationalStage)
+            }
+        }
     }
 
     private fun loadData() {
         viewModelScope.launch {
             val teacher = teacherRepository.fetchCurrentTeacher()
             val teacherId = teacher?.id ?: ""
+            if (teacherId.isNotEmpty()) {
+                groupRepository.refreshGroups(teacherId)
+                gradeRepository.refreshGrades(teacher?.educationalStage)
+            }
 
             val paramsFlow = combine(
                 combine(_selectedTab, _selectedDate, _startDate, _endDate, _groupReportMode) { tab, date, start, end, mode ->

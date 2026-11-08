@@ -350,6 +350,7 @@ class GroupsViewModel(
             if (result.isSuccess) {
                 // Save/replace group days
                 val daysResult = groupRepository.replaceGroupDays(tId, id, state.formDays)
+                groupRepository.refreshGroups(tId)
                 if (daysResult.isSuccess) {
                     _uiState.update {
                         it.copy(

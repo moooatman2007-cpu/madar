@@ -1,5 +1,47 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { constructNotificationMessage } from "./notifications.ts";
+
+describe("constructNotificationMessage ABSENCE Tests", () => {
+    test("primary stage: subject is not displayed", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "primary", subject: "Math", title: "Teacher" });
+        assert.doesNotMatch(message, /المادة:/);
+        assert.match(message, /👨‍🏫 المدرس: \*Teacher\*/);
+    });
+
+    test("intermediate stage: subject is displayed", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "intermediate", subject: "Math", title: "Teacher" });
+        assert.match(message, /📚 المادة: \*Math\*/);
+        assert.match(message, /👨‍🏫 المدرس: \*Teacher\*/);
+    });
+
+    test("secondary stage: subject is displayed", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "secondary", subject: "Physics", title: "Teacher" });
+        assert.match(message, /📚 المادة: \*Physics\*/);
+        assert.match(message, /👨‍🏫 المدرس: \*Teacher\*/);
+    });
+
+    test("subject is empty: no subject line", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "intermediate", subject: "", title: "Teacher" });
+        assert.doesNotMatch(message, /المادة:/);
+    });
+
+    test("subject is 'غير محدد': no subject line", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "intermediate", subject: "غير محدد", title: "Teacher" });
+        assert.doesNotMatch(message, /المادة:/);
+    });
+
+    test("stage is empty: fallback logic", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "", subject: "Math", title: "Teacher" });
+        assert.doesNotMatch(message, /المادة:/);
+        assert.match(message, /👨‍🏫 المدرس: \*Teacher\*/);
+    });
+
+    test("teacherName is empty: fallback title", () => {
+        const message = constructNotificationMessage("ABSENCE", "Ahmed", { stage: "primary", title: null });
+        assert.match(message, /👨‍🏫 المدرس: \*المدرس\*/);
+    });
+});
 
 describe("Notification Worker Production-Grade Idempotency & Reconciliation (12 Required Tests)", () => {
 

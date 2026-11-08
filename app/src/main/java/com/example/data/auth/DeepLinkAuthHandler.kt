@@ -76,6 +76,7 @@ object DeepLinkAuthHandler {
 
             is DeepLinkAuthResult.CodeExchange -> {
                 scope.launch {
+                    val isRecovery = parsed.type.equals("recovery", ignoreCase = true)
                     if (hasExistingSession()) {
                         AuthFeedbackBus.emitError(ACTIVE_SESSION_MSG)
                         return@launch
@@ -86,14 +87,23 @@ object DeepLinkAuthHandler {
                             code = parsed.code,
                             saveSession = false
                         )
-                        // 2. Clear any lingering session to prevent auto-login
-                        AccountSessionManager.endSessionKeepingLocalData()
-
-                        AuthFeedbackBus.emitSuccess("تم تأكيد البريد الإلكتروني بنجاح، يمكنك الآن تسجيل الدخول.")
+                        if (isRecovery) {
+                            // Recovery flow: keep session active in memory so updateUser can be called,
+                            // and notify UI to route to ResetPasswordScreen.
+                            AuthFeedbackBus.emitPasswordRecovery()
+                        } else {
+                            // 2. Clear any lingering session to prevent auto-login
+                            AccountSessionManager.endSessionKeepingLocalData()
+                            AuthFeedbackBus.emitSuccess("تم تأكيد البريد الإلكتروني بنجاح، يمكنك الآن تسجيل الدخول.")
+                        }
                     } catch (e: Exception) {
                         SafeAuthLogger.logAuthError(TAG, "CodeExchange", e)
                         AccountSessionManager.endSessionKeepingLocalData()
-                        val msg = SafeAuthErrorMapper.getArabicErrorMessage(e, AuthActionContext.EMAIL_CONFIRM)
+                        val msg = if (isRecovery) {
+                            "رابط استعادة كلمة المرور غير صالح أو منتهي الصلاحية، يرجى طلب رابط جديد."
+                        } else {
+                            SafeAuthErrorMapper.getArabicErrorMessage(e, AuthActionContext.EMAIL_CONFIRM)
+                        }
                         AuthFeedbackBus.emitError(msg)
                     }
                 }
@@ -101,6 +111,7 @@ object DeepLinkAuthHandler {
 
             is DeepLinkAuthResult.EmailOtp -> {
                 scope.launch {
+                    val isRecovery = parsed.type.equals("recovery", ignoreCase = true)
                     if (hasExistingSession()) {
                         AuthFeedbackBus.emitError(ACTIVE_SESSION_MSG)
                         return@launch
@@ -121,15 +132,24 @@ object DeepLinkAuthHandler {
                             tokenHash = parsed.tokenHash
                         )
 
-                        // Clear any lingering session to respect the policy:
-                        // Signup / email confirm does NOT auto login; user logs in explicitly.
-                        AccountSessionManager.endSessionKeepingLocalData()
-
-                        AuthFeedbackBus.emitSuccess("تم تأكيد البريد الإلكتروني بنجاح، يمكنك الآن تسجيل الدخول.")
+                        if (isRecovery) {
+                            // Recovery flow: keep session active in memory so updateUser can be called,
+                            // and notify UI to route to ResetPasswordScreen.
+                            AuthFeedbackBus.emitPasswordRecovery()
+                        } else {
+                            // Clear any lingering session to respect the policy:
+                            // Signup / email confirm does NOT auto login; user logs in explicitly.
+                            AccountSessionManager.endSessionKeepingLocalData()
+                            AuthFeedbackBus.emitSuccess("تم تأكيد البريد الإلكتروني بنجاح، يمكنك الآن تسجيل الدخول.")
+                        }
                     } catch (e: Exception) {
                         SafeAuthLogger.logAuthError(TAG, "EmailOtp", e)
                         AccountSessionManager.endSessionKeepingLocalData()
-                        val msg = SafeAuthErrorMapper.getArabicErrorMessage(e, AuthActionContext.EMAIL_CONFIRM)
+                        val msg = if (isRecovery) {
+                            "رابط استعادة كلمة المرور غير صالح أو منتهي الصلاحية، يرجى طلب رابط جديد."
+                        } else {
+                            SafeAuthErrorMapper.getArabicErrorMessage(e, AuthActionContext.EMAIL_CONFIRM)
+                        }
                         AuthFeedbackBus.emitError(msg)
                     }
                 }
@@ -137,18 +157,34 @@ object DeepLinkAuthHandler {
 
             is DeepLinkAuthResult.FragmentSession -> {
                 scope.launch {
+                    val isRecovery = parsed.type.equals("recovery", ignoreCase = true)
                     if (hasExistingSession()) {
                         AuthFeedbackBus.emitError(ACTIVE_SESSION_MSG)
                         return@launch
                     }
                     try {
-                        // In case Supabase returned fragment tokens directly, clear session to prevent unintended auto login
-                        AccountSessionManager.endSessionKeepingLocalData()
-
-                        AuthFeedbackBus.emitSuccess("تم تأكيد البريد الإلكتروني بنجاح، يمكنك الآن تسجيل الدخول.")
+                        if (isRecovery) {
+                            val params = parsed.fragment.split("&").associate {
+                                val parts = it.split("=", limit = 2)
+                                if (parts.size == 2) parts[0] to parts[1] else parts[0] to ""
+                            }
+                            val accessToken = params["access_token"]
+                            val refreshToken = params["refresh_token"]
+                            if (!accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()) {
+                                SupabaseClientProvider.client.auth.importAuthToken(accessToken, refreshToken, autoRefresh = false)
+                                AuthFeedbackBus.emitPasswordRecovery()
+                            } else {
+                                AccountSessionManager.endSessionKeepingLocalData()
+                                AuthFeedbackBus.emitError("رابط استعادة كلمة المرور غير صالح أو منتهي الصلاحية.")
+                            }
+                        } else {
+                            AccountSessionManager.endSessionKeepingLocalData()
+                            AuthFeedbackBus.emitSuccess("تم تأكيد البريد الإلكتروني بنجاح، يمكنك الآن تسجيل الدخول.")
+                        }
                     } catch (e: Exception) {
                         SafeAuthLogger.logAuthError(TAG, "FragmentSession", e)
                         AccountSessionManager.endSessionKeepingLocalData()
+                        AuthFeedbackBus.emitError("رابط استعادة كلمة المرور غير صالح أو منتهي الصلاحية.")
                     }
                 }
             }

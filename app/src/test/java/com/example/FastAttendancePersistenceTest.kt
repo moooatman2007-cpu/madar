@@ -43,6 +43,7 @@ class FastAttendancePersistenceTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
+        com.example.data.SupabaseClientProvider.mockTeacherId = "teacher_test"
         gradeRepository = MockGradeRepository(initialStage = EducationalStages.SECONDARY)
         studentRepository = MockStudentRepository(gradeRepository = gradeRepository)
         attendanceRepository = MockAttendanceRepository()
@@ -51,6 +52,7 @@ class FastAttendancePersistenceTest {
 
     @After
     fun tearDown() {
+        com.example.data.SupabaseClientProvider.mockTeacherId = null
         Dispatchers.resetMain()
     }
 

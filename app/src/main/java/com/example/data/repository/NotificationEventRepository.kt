@@ -49,9 +49,19 @@ interface NotificationEventRepository {
     suspend fun createNotificationEvent(event: NotificationEvent): NotificationEventCreationResult
 
     /**
+     * Approves a recitation notification event for sending.
+     */
+    suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult>
+
+    /**
      * Dispatches an asynchronous cycle of the notification worker Edge Function.
      * Optionally filters execution to a specific event type (e.g. "ABSENCE").
      * Safe no-op in test/mock environments or when configured with placeholder endpoints.
      */
     suspend fun triggerNotificationWorker(eventType: String? = null): NotificationWorkerResult = NotificationWorkerResult.Skipped("Default implementation")
+}
+
+sealed interface ApproveRecitationResult {
+    data class Success(val eventId: String, val recitationId: String) : ApproveRecitationResult
+    data class AlreadyApproved(val eventId: String, val recitationId: String) : ApproveRecitationResult
 }

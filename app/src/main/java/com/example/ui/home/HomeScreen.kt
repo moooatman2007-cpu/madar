@@ -545,7 +545,7 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
 
                                 Text(
-                                    text = "لم تُضف أي مجموعات بعد",
+                                    text = "لا توجد مجموعات مجدولة اليوم",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     textAlign = TextAlign.Center
@@ -554,7 +554,7 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
 
                                 Text(
-                                    text = "أنشئ مجموعاتك الدراسية الآن لتنظيم مواعيد الحضور وتوزيع الطلاب بسهولة.",
+                                    text = "قد تكون مجموعاتك الدراسية مجدولة لأيام أخرى من الأسبوع. يمكنك مراجعة جدول المواعيد أو إضافة مجموعة جديدة من «إدارة المجموعات».",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center

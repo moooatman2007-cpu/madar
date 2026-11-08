@@ -10,6 +10,8 @@ import com.example.core.model.Attendance
 import com.example.core.model.AttendanceStatus
 import com.example.core.model.Recitation
 import com.example.core.model.Exam
+import com.example.core.model.Group
+import com.example.core.model.GroupDay
 import com.example.core.model.Homework
 import com.example.core.model.HomeworkStatus
 import com.example.data.repository.AttendanceRepository
@@ -166,28 +168,26 @@ class HomeViewModel(
             }
 
             @OptIn(ExperimentalCoroutinesApi::class)
-            val groupsFlow = teacherRepository.getCurrentTeacher().flatMapLatest { teacher ->
-                if (teacher != null) groupRepository.observeGroups(teacher.id) else flowOf(emptyList())
+            val groupsAndDaysFlow = teacherRepository.getCurrentTeacher().flatMapLatest { teacher ->
+                if (teacher != null) {
+                    combine(
+                        groupRepository.observeGroups(teacher.id),
+                        groupRepository.observeAllGroupDays(teacher.id)
+                    ) { groups, days ->
+                        Pair(groups, days)
+                    }
+                } else {
+                    flowOf(Pair(emptyList(), emptyList()))
+                }
             }
 
             val lastThree = combine(
                 recitationRepository.getAllRecitationsForTeacher(),
                 examRepository.getAllExamsForTeacher(),
                 homeworkRepository.getHomeworkForTeacher(),
-                groupsFlow
-            ) { recitations, exams, homework, groups ->
-                DataBundle2(recitations, exams, homework, groups)
-            }
-
-            val dayOfWeekArabic = when (Calendar.getInstance().get(Calendar.DAY_OF_WEEK)) {
-                Calendar.SATURDAY -> "السبت"
-                Calendar.SUNDAY -> "الأحد"
-                Calendar.MONDAY -> "الاثنين"
-                Calendar.TUESDAY -> "الثلاثاء"
-                Calendar.WEDNESDAY -> "الأربعاء"
-                Calendar.THURSDAY -> "الخميس"
-                Calendar.FRIDAY -> "الجمعة"
-                else -> ""
+                groupsAndDaysFlow
+            ) { recitations, exams, homework, (groups, days) ->
+                DataBundle2(recitations, exams, homework, groups, days)
             }
 
             combine(firstFive, lastThree) { b1, b2 ->
@@ -201,6 +201,7 @@ class HomeViewModel(
                 val exams = b2.exams
                 val homework = b2.homework
                 val groups = b2.groups
+                val groupDays = b2.groupDays
 
                 val currentTeacher = liveTeacher
                 val name = currentTeacher?.fullName?.ifBlank { null } ?: currentTeacher?.email ?: ""
@@ -219,14 +220,15 @@ class HomeViewModel(
 
                 val followUp = calculateFollowUpStudents(students, attendance, recitations, exams, homework)
 
-                val groupDays = if (currentTeacher != null) {
-                    try {
-                        com.example.data.local.DatabaseProvider.getDatabase().groupDayDao().getGroupDaysByTeacher(currentTeacher.id)
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                } else {
-                    emptyList()
+                val dayOfWeekArabic = when (Calendar.getInstance().get(Calendar.DAY_OF_WEEK)) {
+                    Calendar.SATURDAY -> "السبت"
+                    Calendar.SUNDAY -> "الأحد"
+                    Calendar.MONDAY -> "الاثنين"
+                    Calendar.TUESDAY -> "الثلاثاء"
+                    Calendar.WEDNESDAY -> "الأربعاء"
+                    Calendar.THURSDAY -> "الخميس"
+                    Calendar.FRIDAY -> "الجمعة"
+                    else -> ""
                 }
 
                 val groupsToday = groups.filter { g ->
@@ -268,8 +270,7 @@ class HomeViewModel(
                     followUpStudents = followUp,
                     todayGroups = groupsToday
                 )
-            }.flowOn(Dispatchers.Default)
-            .collect { newState ->
+            }.collect { newState ->
                 _uiState.value = newState
             }
         }
@@ -287,7 +288,8 @@ class HomeViewModel(
         val recitations: List<Recitation>,
         val exams: List<Exam>,
         val homework: List<Homework>,
-        val groups: List<com.example.core.model.Group>
+        val groups: List<Group>,
+        val groupDays: List<GroupDay>
     )
 
     private fun calculateFollowUpStudents(
