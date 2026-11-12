@@ -12,6 +12,7 @@ import com.example.data.local.entity.OutboxEntity
 import com.example.data.local.mapper.toDomain
 import com.example.data.local.mapper.toEntity
 import com.example.data.sync.OutboxSyncScheduler
+import androidx.room.withTransaction
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.Dispatchers
@@ -166,6 +167,7 @@ class SupabasePaymentRepository(
             try {
                 val paidAtIso = if (isPaid) java.time.OffsetDateTime.now().toString() else null
                 val paymentId = "${studentId}_${year}_${month}"
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val payment = LessonPayment(
                     paymentId = paymentId,
                     studentId = studentId,
@@ -178,30 +180,64 @@ class SupabasePaymentRepository(
                     createdAt = System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
                 )
-                paymentDao?.upsertSinglePayment(payment.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            paymentDao?.upsertSinglePayment(payment.toEntity())
+                            val upsertDto = UpsertLessonPaymentRequest(
+                                teacherId = teacherId,
+                                studentId = studentId,
+                                year = year,
+                                month = month,
+                                amount = amount,
+                                isPaid = isPaid,
+                                paidAt = paidAtIso
+                            )
+                            val payload = kotlinx.serialization.json.Json.encodeToString(upsertDto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPSERT",
+                                    entityType = "PAYMENT",
+                                    entityId = paymentId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        paymentDao?.upsertSinglePayment(payment.toEntity())
+                        val upsertDto = UpsertLessonPaymentRequest(
+                            teacherId = teacherId,
+                            studentId = studentId,
+                            year = year,
+                            month = month,
+                            amount = amount,
+                            isPaid = isPaid,
+                            paidAt = paidAtIso
+                        )
+                        val payload = kotlinx.serialization.json.Json.encodeToString(upsertDto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "UPSERT",
+                                entityType = "PAYMENT",
+                                entityId = paymentId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر حفظ المدفوعات محلياً."))
+                }
 
-                val upsertDto = UpsertLessonPaymentRequest(
-                    teacherId = teacherId,
-                    studentId = studentId,
-                    year = year,
-                    month = month,
-                    amount = amount,
-                    isPaid = isPaid,
-                    paidAt = paidAtIso
-                )
-                val payload = kotlinx.serialization.json.Json.encodeToString(upsertDto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPSERT",
-                        entityType = "PAYMENT",
-                        entityId = paymentId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(payment)

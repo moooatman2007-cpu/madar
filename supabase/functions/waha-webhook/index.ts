@@ -314,13 +314,19 @@ Deno.serve(async (req: Request) => {
           const isWorking = upperStatus === "WORKING" || upperStatus === "CONNECTED";
           const now = new Date().toISOString();
           const normalizedStatus = isWorking ? "CONNECTED" : (upperStatus === "SCAN_QR_CODE" ? "SCAN_QR_CODE" : "DISCONNECTED");
-          await supabase.from("teacher_whatsapp_sessions").upsert({
-            teacher_id: teacherId,
-            session_name: sessionName,
-            status: normalizedStatus,
-            last_connected_at: isWorking ? now : null,
-            updated_at: now,
-          }, { onConflict: "teacher_id" });
+
+          // Guard: Do not overwrite an existing CONNECTED session with transient STARTING event
+          if (session?.status === "CONNECTED" && !isWorking && upperStatus === "STARTING") {
+            console.log(`[waha-webhook] Preserving CONNECTED status for session ${sessionName}, ignoring transient status: ${upperStatus}`);
+          } else {
+            await supabase.from("teacher_whatsapp_sessions").upsert({
+              teacher_id: teacherId,
+              session_name: sessionName,
+              status: normalizedStatus,
+              last_connected_at: isWorking ? now : null,
+              updated_at: now,
+            }, { onConflict: "teacher_id" });
+          }
         }
       }
 

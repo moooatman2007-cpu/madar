@@ -21,7 +21,8 @@ enum class ReportsTab(val titleAr: String) {
     GROUP_DAILY("تقرير مجموعة"),
     GRADE_DAILY("تقرير صف"),
     TEACHER_DAILY("تقرير المدرس"),
-    STUDENT("تقرير طالب");
+    STUDENT("تقرير طالب"),
+    TOP_STUDENTS("الأوائل");
 
     companion object {
         val GROUP = GROUP_DAILY
@@ -189,6 +190,44 @@ data class StudentGroupMetric(
     val examRate: Float
 )
 
+data class TopStudent(
+    val student: Student,
+    val overallScore: Double?,
+    val isQualified: Boolean,
+    val rank: Int = 0,
+    val isTied: Boolean = false,
+    val recitationCount: Int = 0,
+    val recitationAvg: Float? = null,
+    val examCount: Int = 0,
+    val examAvg: Float? = null,
+    val homeworkCount: Int = 0,
+    val completedHomeworkCount: Int = 0,
+    val homeworkPercent: Float? = null,
+    val attendanceCount: Int = 0,
+    val presentCount: Int = 0,
+    val absentCount: Int = 0,
+    val attendancePercent: Float? = null,
+    val unqualifiedReason: String? = null
+)
+
+enum class TopStudentsMode { CLASS, GROUP }
+
+data class TopStudentsReportData(
+    val title: String,
+    val students: List<TopStudent>,
+    val unqualifiedStudents: List<TopStudent> = emptyList(),
+    val selectedGradeName: String?,
+    val selectedGroupName: String?,
+    val minRecitationsRequired: Int = ReportsViewModel.MIN_RECITATIONS_REQUIRED,
+    val minExamsRequired: Int = ReportsViewModel.MIN_EXAMS_REQUIRED,
+    val minHomeworkRequired: Int = ReportsViewModel.MIN_HOMEWORK_REQUIRED,
+    val totalRecitationsCount: Int = 0,
+    val totalExamsCount: Int = 0,
+    val totalHomeworkCount: Int = 0,
+    val isDataSufficient: Boolean = false,
+    val sufficientDataMessage: String? = null
+)
+
 data class ReportsUiState(
     val isLoading: Boolean = false,
     val selectedTab: ReportsTab = ReportsTab.GROUP_DAILY,
@@ -208,6 +247,8 @@ data class ReportsUiState(
     val teacherDailyReport: TeacherDailyReportData? = null,
     val studentReport: StudentReportData? = null,
     val groupReport: GroupReportData? = null,
+    val topStudentsReport: TopStudentsReportData? = null,
+    val topStudentsMode: TopStudentsMode = TopStudentsMode.CLASS,
     val currentMonthlyReport: MonthlyReport? = null,
     val isSendingNotification: Boolean = false,
     val notificationMessage: String? = null
@@ -221,7 +262,8 @@ private data class FilterParams(
     val studentId: String?,
     val gradeId: String?,
     val groupId: String?,
-    val groupReportMode: GroupReportMode
+    val groupReportMode: GroupReportMode,
+    val topStudentsMode: TopStudentsMode
 )
 
 private data class RepoData(
@@ -253,6 +295,12 @@ class ReportsViewModel(
     private val notificationEventRepository: NotificationEventRepository = RepositoryProvider.notificationEventRepository
 ) : ViewModel() {
 
+    companion object {
+        const val MIN_RECITATIONS_REQUIRED = 3
+        const val MIN_EXAMS_REQUIRED = 3
+        const val MIN_HOMEWORK_REQUIRED = 3
+    }
+
     private val _selectedTab = MutableStateFlow(ReportsTab.GROUP_DAILY)
     private val _selectedDate = MutableStateFlow(LocalDate.now())
     private val _startDate = MutableStateFlow(LocalDate.now().minusDays(30))
@@ -264,6 +312,7 @@ class ReportsViewModel(
     private val _currentMonthlyReport = MutableStateFlow<MonthlyReport?>(null)
     private val _isSendingNotification = MutableStateFlow(false)
     private val _notificationMessage = MutableStateFlow<String?>(null)
+    private val _topStudentsMode = MutableStateFlow(TopStudentsMode.CLASS)
 
     private val _uiState = MutableStateFlow(ReportsUiState())
     val uiState: StateFlow<ReportsUiState> = _uiState.asStateFlow()
@@ -294,22 +343,20 @@ class ReportsViewModel(
             }
 
             val paramsFlow = combine(
-                combine(_selectedTab, _selectedDate, _startDate, _endDate, _groupReportMode) { tab, date, start, end, mode ->
-                    listOf<Any?>(tab, date, start, end, mode)
-                },
-                combine(_selectedStudentId, _selectedGradeId, _selectedGroupId) { studentId, gradeId, groupId ->
-                    listOf<Any?>(studentId, gradeId, groupId)
-                }
-            ) { list1, list2 ->
+                combine(_selectedTab, _selectedDate, _startDate) { tab, date, start -> Triple(tab, date, start) },
+                combine(_endDate, _groupReportMode, _topStudentsMode) { end, mode, topMode -> Triple(end, mode, topMode) },
+                combine(_selectedStudentId, _selectedGradeId, _selectedGroupId) { studentId, gradeId, groupId -> Triple(studentId, gradeId, groupId) }
+            ) { p1, p2, p3 ->
                 FilterParams(
-                    tab = list1[0] as ReportsTab,
-                    date = list1[1] as LocalDate,
-                    start = list1[2] as LocalDate,
-                    end = list1[3] as LocalDate,
-                    groupReportMode = list1[4] as GroupReportMode,
-                    studentId = list2[0] as String?,
-                    gradeId = list2[1] as String?,
-                    groupId = list2[2] as String?
+                    tab = p1.first,
+                    date = p1.second,
+                    start = p1.third,
+                    end = p2.first,
+                    groupReportMode = p2.second,
+                    topStudentsMode = p2.third,
+                    studentId = p3.first,
+                    gradeId = p3.second,
+                    groupId = p3.third
                 )
             }
 
@@ -678,7 +725,6 @@ class ReportsViewModel(
                     } else null
                 } else null
 
-                // 5. Group Report (Period based)
                 val groupReport = if (gradeId != null) {
                     val grade = filteredGrades.find { it.id == gradeId }
                     if (grade != null) {
@@ -719,6 +765,23 @@ class ReportsViewModel(
                     } else null
                 } else null
 
+                val topStudentsReport = if (tab == ReportsTab.TOP_STUDENTS) {
+                    calculateTopStudents(
+                        allStudents = filteredStudents,
+                        allRecitations = allRecitations,
+                        allExams = allExams,
+                        allHomework = allHomework,
+                        allAttendance = allAttendance,
+                        gradeId = gradeId,
+                        groupId = groupId,
+                        mode = params.topStudentsMode,
+                        allGrades = filteredGrades,
+                        allGroups = filteredGroups,
+                        startDateStr = startStr,
+                        endDateStr = endStr
+                    )
+                } else null
+
                 ReportsUiState(
                     isLoading = false,
                     selectedTab = tab,
@@ -737,7 +800,9 @@ class ReportsViewModel(
                     gradeDailyReport = gradeDailyReport,
                     teacherDailyReport = teacherDailyReport,
                     studentReport = studentReport,
-                    groupReport = groupReport
+                    groupReport = groupReport,
+                    topStudentsReport = topStudentsReport,
+                    topStudentsMode = params.topStudentsMode
                 )
             }.combine(_currentMonthlyReport) { state, monthlyReport ->
                 state.copy(currentMonthlyReport = monthlyReport)
@@ -1213,5 +1278,180 @@ class ReportsViewModel(
 
     fun clearNotificationMessage() {
         _notificationMessage.value = null
+    }
+
+    fun setTopStudentsMode(mode: TopStudentsMode) {
+        _topStudentsMode.value = mode
+    }
+
+    internal fun calculateTopStudents(
+        allStudents: List<Student>,
+        allRecitations: List<Recitation>,
+        allExams: List<Exam>,
+        allHomework: List<Homework>,
+        allAttendance: List<Attendance>,
+        gradeId: String?,
+        groupId: String?,
+        mode: TopStudentsMode,
+        allGrades: List<Grade>,
+        allGroups: List<Group>,
+        startDateStr: String? = null,
+        endDateStr: String? = null
+    ): TopStudentsReportData {
+        val studentsInScope = when (mode) {
+            TopStudentsMode.CLASS -> if (gradeId != null) allStudents.filter { it.gradeId == gradeId } else allStudents
+            TopStudentsMode.GROUP -> if (groupId != null) allStudents.filter { it.groupId == groupId } else allStudents
+        }
+
+        val studentIdsInScope = studentsInScope.map { it.studentId }.toSet()
+
+        val recsFilteredByDate = if (startDateStr != null && endDateStr != null) {
+            allRecitations.filter { it.date in startDateStr..endDateStr }
+        } else allRecitations
+
+        val examsFilteredByDate = if (startDateStr != null && endDateStr != null) {
+            allExams.filter { it.date in startDateStr..endDateStr }
+        } else allExams
+
+        val hwFilteredByDate = if (startDateStr != null && endDateStr != null) {
+            allHomework.filter { it.date in startDateStr..endDateStr }
+        } else allHomework
+
+        val recitationsInScope = (if (recsFilteredByDate.isNotEmpty()) recsFilteredByDate else allRecitations)
+            .filter { it.studentId in studentIdsInScope }
+
+        val examsInScope = (if (examsFilteredByDate.isNotEmpty()) examsFilteredByDate else allExams)
+            .filter { it.studentId in studentIdsInScope }
+
+        val homeworkInScope = (if (hwFilteredByDate.isNotEmpty()) hwFilteredByDate else allHomework)
+            .filter { it.studentId in studentIdsInScope }
+
+        val evaluatedStudents = studentsInScope.map { s ->
+            val sRec = recitationsInScope.filter { it.studentId == s.studentId && it.maxScore > 0.0 }
+            val sEx = examsInScope.filter { it.studentId == s.studentId && it.maxScore > 0.0 }
+            val sHw = homeworkInScope.filter { it.studentId == s.studentId }
+            val sAtt = allAttendance.filter { it.studentId == s.studentId && it.date in (startDateStr ?: "0000-00-00")..(endDateStr ?: "9999-99-99") }
+
+            val recCount = sRec.size
+            val exCount = sEx.size
+            val hwCount = sHw.size
+            val attRecords = sAtt.filter { it.status == AttendanceStatus.PRESENT || it.status == AttendanceStatus.ABSENT || it.status == AttendanceStatus.LATE || it.status == AttendanceStatus.EXCUSED }
+            val attCount = attRecords.size
+            val presentCount = attRecords.count { it.status == AttendanceStatus.PRESENT || it.status == AttendanceStatus.LATE }
+            val absentCount = attRecords.count { it.status == AttendanceStatus.ABSENT }
+
+            val recAvg = if (recCount >= MIN_RECITATIONS_REQUIRED) {
+                sRec.map { (it.score / it.maxScore) * 100.0 }.average().toFloat()
+            } else null
+
+            val exAvg = if (exCount >= MIN_EXAMS_REQUIRED) {
+                sEx.map { (it.score / it.maxScore) * 100.0 }.average().toFloat()
+            } else null
+
+            val completedHwCount = sHw.count { it.status == HomeworkStatus.COMPLETED }
+            val hwPct = if (hwCount >= MIN_HOMEWORK_REQUIRED) {
+                (completedHwCount.toDouble() / hwCount.toDouble() * 100.0).toFloat()
+            } else null
+
+            val attPct = if (attCount >= 3) {
+                (presentCount.toDouble() / attCount.toDouble() * 100.0).toFloat()
+            } else null
+
+            val isQualified = recAvg != null && exAvg != null && hwPct != null && attPct != null
+
+            val overallScore = if (isQualified) {
+                (recAvg!!.toDouble() + exAvg!!.toDouble() + hwPct!!.toDouble() + attPct!!.toDouble()) / 4.0
+            } else null
+
+            val unqualifiedReasons = mutableListOf<String>()
+            if (recCount < MIN_RECITATIONS_REQUIRED) {
+                unqualifiedReasons.add("تسميعات: $recCount/$MIN_RECITATIONS_REQUIRED")
+            }
+            if (exCount < MIN_EXAMS_REQUIRED) {
+                unqualifiedReasons.add("امتحانات: $exCount/$MIN_EXAMS_REQUIRED")
+            }
+            if (hwCount < MIN_HOMEWORK_REQUIRED) {
+                unqualifiedReasons.add("واجبات: $hwCount/$MIN_HOMEWORK_REQUIRED")
+            }
+            if (attCount < 3) {
+                unqualifiedReasons.add("الحضور: $attCount/3")
+            }
+            if (attCount < 3) {
+                unqualifiedReasons.add("الحضور: $attCount/3")
+            }
+
+            val reasonStr = if (!isQualified) "ينقص: " + unqualifiedReasons.joinToString(" • ") else null
+
+            TopStudent(
+                student = s,
+                overallScore = overallScore,
+                isQualified = isQualified,
+                rank = 0,
+                isTied = false,
+                recitationCount = recCount,
+                recitationAvg = recAvg,
+                examCount = exCount,
+                examAvg = exAvg,
+                homeworkCount = hwCount,
+                completedHomeworkCount = completedHwCount,
+                homeworkPercent = hwPct,
+                attendanceCount = attCount,
+                presentCount = presentCount,
+                absentCount = absentCount,
+                attendancePercent = attPct,
+                unqualifiedReason = reasonStr
+            )
+        }
+
+        val qualifiedList = evaluatedStudents
+            .filter { it.isQualified && it.overallScore != null }
+            .sortedByDescending { it.overallScore!! }
+
+        val unqualifiedList = evaluatedStudents
+            .filter { !it.isQualified }
+            .sortedBy { it.student.fullName }
+
+        val rankedQualified = mutableListOf<TopStudent>()
+        var currentRank = 1
+        for (i in qualifiedList.indices) {
+            val curr = qualifiedList[i]
+            if (i > 0) {
+                val prev = qualifiedList[i - 1]
+                if (Math.abs(curr.overallScore!! - prev.overallScore!!) < 0.001) {
+                    rankedQualified.add(curr.copy(rank = prev.rank, isTied = true))
+                    if (!rankedQualified[i - 1].isTied) {
+                        rankedQualified[i - 1] = rankedQualified[i - 1].copy(isTied = true)
+                    }
+                } else {
+                    currentRank = i + 1
+                    rankedQualified.add(curr.copy(rank = currentRank, isTied = false))
+                }
+            } else {
+                rankedQualified.add(curr.copy(rank = 1, isTied = false))
+            }
+        }
+
+        val gradeName = allGrades.find { it.id == gradeId }?.name
+        val groupName = allGroups.find { it.id == groupId }?.name
+
+        val isDataSufficient = rankedQualified.isNotEmpty()
+
+        return TopStudentsReportData(
+            title = if (mode == TopStudentsMode.CLASS) "أوائل الصف ${gradeName ?: ""}" else "أوائل المجموعة ${groupName ?: ""}",
+            students = rankedQualified,
+            unqualifiedStudents = unqualifiedList,
+            selectedGradeName = gradeName,
+            selectedGroupName = groupName,
+            minRecitationsRequired = MIN_RECITATIONS_REQUIRED,
+            minExamsRequired = MIN_EXAMS_REQUIRED,
+            minHomeworkRequired = MIN_HOMEWORK_REQUIRED,
+            totalRecitationsCount = recitationsInScope.size,
+            totalExamsCount = examsInScope.size,
+            totalHomeworkCount = homeworkInScope.size,
+            isDataSufficient = isDataSufficient,
+            sufficientDataMessage = if (!isDataSufficient) {
+                "لا توجد بيانات كافية لإعداد ترتيب موثوق للأوائل حاليًا. نحتاج إلى تسجيل المزيد من التسميعات والامتحانات والواجبات."
+            } else null
+        )
     }
 }

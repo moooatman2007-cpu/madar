@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -143,6 +144,14 @@ fun ReportsScreen(
                         viewModel.selectTab(ReportsTab.TEACHER_DAILY)
                     },
                     text = { Text("يوم المعلم", fontWeight = FontWeight.Bold) }
+                )
+                Tab(
+                    selected = uiState.selectedTab == ReportsTab.TOP_STUDENTS && !isMonthlyReportMode,
+                    onClick = {
+                        isMonthlyReportMode = false
+                        viewModel.selectTab(ReportsTab.TOP_STUDENTS)
+                    },
+                    text = { Text("الأوائل", fontWeight = FontWeight.Bold) }
                 )
             }
 
@@ -361,6 +370,7 @@ fun ReportsScreen(
                         }
                     )
                     ReportsTab.TEACHER_DAILY -> teacherDailyReportContent(uiState, viewModel)
+                    ReportsTab.TOP_STUDENTS -> topStudentsReportContent(uiState, viewModel)
                     ReportsTab.STUDENT -> studentReportContent(
                         uiState = uiState,
                         onNavigateToStudentDetail = onNavigateToStudentDetail,
@@ -371,6 +381,9 @@ fun ReportsScreen(
             }
         }
     }
+
+    // ... append topStudentsReportContent here?
+    // Wait, let's just make it a fun.
 
     // Single Date Picker Dialog for Daily Reports
     if (showDatePicker) {
@@ -1024,6 +1037,133 @@ fun DailySelectionControls(uiState: ReportsUiState, viewModel: ReportsViewModel)
                                     expanded = false
                                 }
                             )
+                        }
+                    }
+                }
+            }
+
+            ReportsTab.TOP_STUDENTS -> {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Mode Toggle (Class vs Group)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (uiState.topStudentsMode == TopStudentsMode.CLASS) PrimaryIndigo else Color.Transparent,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { viewModel.setTopStudentsMode(TopStudentsMode.CLASS) }
+                        ) {
+                            Text(
+                                text = "🏆 أوائل الصف",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = if (uiState.topStudentsMode == TopStudentsMode.CLASS) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (uiState.topStudentsMode == TopStudentsMode.GROUP) PrimaryIndigo else Color.Transparent,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { viewModel.setTopStudentsMode(TopStudentsMode.GROUP) }
+                        ) {
+                            Text(
+                                text = "👥 أوائل المجموعة",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = if (uiState.topStudentsMode == TopStudentsMode.GROUP) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                    }
+
+                    // Selection Dropdown
+                    if (uiState.topStudentsMode == TopStudentsMode.CLASS) {
+                        val currentGrade = uiState.grades.find { it.id == uiState.selectedGradeId }
+                        val displayText = currentGrade?.name ?: "اختر الصف الدراسي"
+
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = displayText,
+                                onValueChange = {},
+                                readOnly = true,
+                                placeholder = { Text("اختر الصف الدراسي") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryIndigo,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            )
+                            ExposedDropdownMenu(
+                                expanded = expanded,
+                                onDismissRequest = { expanded = false }
+                            ) {
+                                uiState.grades.forEach { grade ->
+                                    DropdownMenuItem(
+                                        text = { Text(grade.name) },
+                                        onClick = {
+                                            viewModel.selectGrade(grade.id)
+                                            expanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        val currentGroup = uiState.groups.find { it.id == uiState.selectedGroupId }
+                        val groupGradeName = uiState.grades.find { it.id == currentGroup?.gradeId }?.name ?: ""
+                        val displayText = if (currentGroup != null) "${currentGroup.name} ($groupGradeName)" else "اختر المجموعة"
+
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = displayText,
+                                onValueChange = {},
+                                readOnly = true,
+                                placeholder = { Text("اختر المجموعة") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryIndigo,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            )
+                            ExposedDropdownMenu(
+                                expanded = expanded,
+                                onDismissRequest = { expanded = false }
+                            ) {
+                                uiState.groups.forEach { group ->
+                                    val gradeName = uiState.grades.find { it.id == group.gradeId }?.name ?: ""
+                                    DropdownMenuItem(
+                                        text = { Text("${group.name} - $gradeName") },
+                                        onClick = {
+                                            viewModel.selectGroup(group.id)
+                                            expanded = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2734,6 +2874,372 @@ fun DailyExamCard(
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                 )
             }
+        }
+    }
+}
+
+fun LazyListScope.topStudentsReportContent(uiState: ReportsUiState, viewModel: ReportsViewModel) {
+    val report = uiState.topStudentsReport
+    if (report == null) {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Text(
+                    text = "يرجى تحديد صف دراسي أو مجموعة لعرض ترتيب الأوائل.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(16.dp),
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+        return
+    }
+
+    // 1. Header title & Qualification Threshold Banner
+    item {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Text(
+                text = "🏆 " + report.title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+                color = PrimaryIndigoLight,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = PrimaryIndigo,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "شروط التأهل: تسجيل ${report.minRecitationsRequired} تسميعات، ${report.minExamsRequired} امتحانات، و${report.minHomeworkRequired} واجبات على الأقل لكل طالب.",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        color = PrimaryIndigo
+                    )
+                }
+            }
+        }
+    }
+
+    // 2. Summary Statistics Card for Scope
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "📊 ملخص تقييمات النطاق الحالي",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    TopStudentMetricChip(label = "التسميعات", count = report.totalRecitationsCount, color = EmeraldGreen)
+                    TopStudentMetricChip(label = "الامتحانات", count = report.totalExamsCount, color = PrimaryIndigo)
+                    TopStudentMetricChip(label = "الواجبات", count = report.totalHomeworkCount, color = ElectricBlue)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "🏆 المؤهلون للترتيب: ${report.students.size}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = EmeraldGreen
+                    )
+                    Text(
+                        text = "⏳ غير مستوفين للشروط: ${report.unqualifiedStudents.size}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = WarmAmber
+                    )
+                }
+            }
+        }
+    }
+
+    // 3. Case 1: Insufficient Data (0 qualified students)
+    if (!report.isDataSufficient || report.students.isEmpty()) {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = DangerRedLight)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = DangerRed,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Text(
+                        text = "تنبيه عدم كفاية البيانات",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = DangerRed,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = report.sufficientDataMessage ?: "لا توجد بيانات كافية لإعداد ترتيب موثوق للأوائل حاليًا. نحتاج إلى تسجيل المزيد من التسميعات والامتحانات والواجبات.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    } else {
+        // Case 2: Only 1 qualified student note
+        if (report.students.size == 1) {
+            item {
+                Surface(
+                    color = EmeraldGreenLight,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = EmeraldGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ℹ️ ملاحظة: هذا هو الطالب الوحيد المستوفي لشروط الترشيح حالياً.",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFF047857)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Section Title: Qualified Ranked Students
+        item {
+            Text(
+                text = "🏆 قائمة الأوائل (${report.students.size})",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+            )
+        }
+
+        // Render ranked qualified students (Top 10)
+        itemsIndexed(report.students.take(10)) { _, topStudent ->
+            val rankText = when (topStudent.rank) {
+                1 -> "🥇 المركز الأول" + if (topStudent.isTied) " (مكرر)" else ""
+                2 -> "🥈 المركز الثاني" + if (topStudent.isTied) " (مكرر)" else ""
+                3 -> "🥉 المركز الثالث" + if (topStudent.isTied) " (مكرر)" else ""
+                else -> "المركز ${topStudent.rank}" + if (topStudent.isTied) " (مكرر)" else ""
+            }
+
+            val cardContainerColor = when (topStudent.rank) {
+                1 -> Color(0xFFFFFBEB) // Light warm gold tint
+                2 -> Color(0xFFF8FAFC) // Light silver tint
+                3 -> Color(0xFFFFF7ED) // Light bronze tint
+                else -> MaterialTheme.colorScheme.surface
+            }
+
+            val badgeColor = when (topStudent.rank) {
+                1 -> Color(0xFFD97706) // Amber/Gold
+                2 -> Color(0xFF64748B) // Slate/Silver
+                3 -> Color(0xFFB45309) // Bronze
+                else -> PrimaryIndigo
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = cardContainerColor),
+                elevation = CardDefaults.cardElevation(defaultElevation = if (topStudent.rank <= 3) 2.dp else 1.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    // Top Row: Rank badge + Overall Score
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = badgeColor.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = rankText,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = badgeColor,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        Text(
+                            text = "%.1f%%".format(topStudent.overallScore ?: 0.0),
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = PrimaryIndigo
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StudentAvatar(fullName = topStudent.student.fullName, size = 44.dp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = topStudent.student.fullName,
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = topStudent.student.studentCode,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Breakdown Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "📖 تسميع: %.1f%% (%d)".format(topStudent.recitationAvg ?: 0f, topStudent.recitationCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = EmeraldGreen
+                        )
+                        Text(
+                            text = "📋 امتحانات: %.1f%% (%d)".format(topStudent.examAvg ?: 0f, topStudent.examCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PrimaryIndigo
+                        )
+                        Text(
+                            text = "📝 واجبات: %.1f%% (%d/%d)".format(
+                                topStudent.homeworkPercent ?: 0f,
+                                topStudent.completedHomeworkCount,
+                                topStudent.homeworkCount
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ElectricBlue
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                         Text(
+                            text = "✅ حضور: %.1f%% (%d/%d)".format(
+                                topStudent.attendancePercent ?: 0f,
+                                topStudent.presentCount,
+                                topStudent.attendanceCount
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = EmeraldGreen
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "ملاحظة: الحضور يمثل 25% من التقييم النهائي",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        }
+    }
+
+    // 4. Unqualified Students Section
+    if (report.unqualifiedStudents.isNotEmpty()) {
+        item {
+            Text(
+                text = "⏳ طلاب بحاجة لاستكمال التقييمات (${report.unqualifiedStudents.size})",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+            )
+        }
+
+        items(report.unqualifiedStudents) { unqStudent ->
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StudentAvatar(fullName = unqStudent.student.fullName, size = 36.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = unqStudent.student.fullName,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        unqStudent.unqualifiedReason?.let { reason ->
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = WarmAmber
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TopStudentMetricChip(label: String, count: Int, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = color.copy(alpha = 0.1f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "$label: ",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "$count",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = color
+            )
         }
     }
 }

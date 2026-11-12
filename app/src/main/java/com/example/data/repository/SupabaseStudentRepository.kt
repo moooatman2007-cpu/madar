@@ -10,6 +10,7 @@ import com.example.core.model.SyncResult
 import com.example.core.model.SupabaseStudentInsertDto
 import com.example.core.model.TeacherStats
 import com.example.core.model.UpdateStudentRequest
+import androidx.room.withTransaction
 import com.example.data.SupabaseClientProvider
 import com.example.data.local.DatabaseProvider
 import com.example.data.local.dao.OutboxDao
@@ -287,38 +288,72 @@ class SupabaseStudentRepository(
 
             // Fallback to offline local write and Outbox queue
             try {
-                studentDao?.upsertStudent(student.toEntity())
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            studentDao?.upsertStudent(student.toEntity())
+                            val request = InsertStudentRequest(
+                                id = generatedId,
+                                teacherId = teacherId,
+                                gradeId = gradeId,
+                                fullName = fullName.trim(),
+                                parentPhone = parentPhone.trim(),
+                                hasWhatsApp = hasWhatsApp,
+                                alternativePhone = alternativePhone?.trim()?.ifBlank { null }
+                            )
+                            val payload = Json.encodeToString(request)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "INSERT",
+                                    entityType = "STUDENT",
+                                    entityId = generatedId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        studentDao?.upsertStudent(student.toEntity())
+                        val request = InsertStudentRequest(
+                            id = generatedId,
+                            teacherId = teacherId,
+                            gradeId = gradeId,
+                            fullName = fullName.trim(),
+                            parentPhone = parentPhone.trim(),
+                            hasWhatsApp = hasWhatsApp,
+                            alternativePhone = alternativePhone?.trim()?.ifBlank { null }
+                        )
+                        val payload = Json.encodeToString(request)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "INSERT",
+                                entityType = "STUDENT",
+                                entityId = generatedId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر الحفظ محلياً."))
+                }
 
-                val request = InsertStudentRequest(
-                    id = generatedId,
-                    teacherId = teacherId,
-                    gradeId = gradeId,
-                    fullName = fullName.trim(),
-                    parentPhone = parentPhone.trim(),
-                    hasWhatsApp = hasWhatsApp,
-                    alternativePhone = alternativePhone?.trim()?.ifBlank { null }
-                )
-                val payload = Json.encodeToString(request)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "INSERT",
-                        entityType = "STUDENT",
-                        entityId = generatedId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 val currentList = _students.value.toMutableList()
                 currentList.add(0, student)
                 _students.value = currentList
 
-                
-        Log.d("SyncDiag", "REPO ADD SUCCESS: id=${student.studentId}")
+                Log.d("SyncDiag", "REPO ADD SUCCESS: id=${student.studentId}")
                 Result.success(SyncResult(student, BatchSyncStatus.QUEUED_OFFLINE))
             } catch (ex: Exception) {
                 ex.printStackTrace()
@@ -386,29 +421,63 @@ class SupabaseStudentRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                studentDao?.upsertStudent(safeStudent.toEntity())
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            studentDao?.upsertStudent(safeStudent.toEntity())
+                            val request = UpdateStudentRequest(
+                                gradeId = safeStudent.gradeId,
+                                fullName = safeStudent.fullName.trim(),
+                                parentPhone = safeStudent.parentPhone.trim(),
+                                hasWhatsApp = safeStudent.hasWhatsApp,
+                                alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null },
+                                groupId = safeStudent.groupId
+                            )
+                            val payload = Json.encodeToString(request)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPDATE",
+                                    entityType = "STUDENT",
+                                    entityId = safeStudent.studentId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        studentDao?.upsertStudent(safeStudent.toEntity())
+                        val request = UpdateStudentRequest(
+                            gradeId = safeStudent.gradeId,
+                            fullName = safeStudent.fullName.trim(),
+                            parentPhone = safeStudent.parentPhone.trim(),
+                            hasWhatsApp = safeStudent.hasWhatsApp,
+                            alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null },
+                            groupId = safeStudent.groupId
+                        )
+                        val payload = Json.encodeToString(request)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "UPDATE",
+                                entityType = "STUDENT",
+                                entityId = safeStudent.studentId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر الحفظ محلياً."))
+                }
 
-                val request = UpdateStudentRequest(
-                    gradeId = safeStudent.gradeId,
-                    fullName = safeStudent.fullName.trim(),
-                    parentPhone = safeStudent.parentPhone.trim(),
-                    hasWhatsApp = safeStudent.hasWhatsApp,
-                    alternativePhone = safeStudent.alternativePhone?.trim()?.ifBlank { null },
-                    groupId = safeStudent.groupId
-                )
-                val payload = Json.encodeToString(request)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPDATE",
-                        entityType = "STUDENT",
-                        entityId = safeStudent.studentId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 val currentList = _students.value.toMutableList()
@@ -455,23 +524,51 @@ class SupabaseStudentRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                studentDao?.deleteStudentById(teacherId, studentId)
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val deleted = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            studentDao?.deleteStudentById(teacherId, studentId)
+                            val nowIso = java.time.OffsetDateTime.now().toString()
+                            val request = SoftDeleteStudentRequest(deletedAt = nowIso)
+                            val payload = Json.encodeToString(request)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "DELETE",
+                                    entityType = "STUDENT",
+                                    entityId = studentId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        studentDao?.deleteStudentById(teacherId, studentId)
+                        val nowIso = java.time.OffsetDateTime.now().toString()
+                        val request = SoftDeleteStudentRequest(deletedAt = nowIso)
+                        val payload = Json.encodeToString(request)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "DELETE",
+                                entityType = "STUDENT",
+                                entityId = studentId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (deleted == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر الحذف محلياً."))
+                }
 
-                val nowIso = java.time.OffsetDateTime.now().toString()
-                val request = SoftDeleteStudentRequest(deletedAt = nowIso)
-                val payload = Json.encodeToString(request)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "DELETE",
-                        entityType = "STUDENT",
-                        entityId = studentId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 _students.value = _students.value.filterNot { it.studentId == studentId }

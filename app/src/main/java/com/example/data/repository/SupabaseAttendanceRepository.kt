@@ -485,29 +485,63 @@ class SupabaseAttendanceRepository(
                         status = status,
                         note = note
                     )
-                    attendanceDao?.upsertSingleAttendance(attendance.toEntity())
+                    val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                    val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                        if (db != null) {
+                            db.withTransaction {
+                                attendanceDao?.upsertSingleAttendance(attendance.toEntity())
+                                val upsertDto = UpsertAttendanceRequest(
+                                    teacherId = teacherId,
+                                    studentId = studentId,
+                                    groupId = effectiveGroupId,
+                                    date = date,
+                                    status = status.name,
+                                    note = note?.ifBlank { null }
+                                )
+                                val payload = Json.encodeToString(upsertDto)
+                                outboxDao?.insertOperation(
+                                    OutboxEntity(
+                                        id = UUID.randomUUID().toString(),
+                                        operationType = "UPSERT",
+                                        entityType = "ATTENDANCE",
+                                        entityId = attendanceId,
+                                        payload = payload,
+                                        createdAt = System.currentTimeMillis(),
+                                        status = "PENDING",
+                                        teacherId = teacherId
+                                    )
+                                )
+                            }
+                        } else {
+                            attendanceDao?.upsertSingleAttendance(attendance.toEntity())
+                            val upsertDto = UpsertAttendanceRequest(
+                                teacherId = teacherId,
+                                studentId = studentId,
+                                groupId = effectiveGroupId,
+                                date = date,
+                                status = status.name,
+                                note = note?.ifBlank { null }
+                            )
+                            val payload = Json.encodeToString(upsertDto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPSERT",
+                                    entityType = "ATTENDANCE",
+                                    entityId = attendanceId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                        true
+                    }
+                    if (written == null) {
+                        return@withContext Result.failure(Exception("انتهت الجلسة، تعذر حفظ الحضور محلياً."))
+                    }
 
-                    val upsertDto = UpsertAttendanceRequest(
-                        teacherId = teacherId,
-                        studentId = studentId,
-                        groupId = effectiveGroupId,
-                        date = date,
-                        status = status.name,
-                        note = note?.ifBlank { null }
-                    )
-                    val payload = Json.encodeToString(upsertDto)
-                    outboxDao?.insertOperation(
-                        OutboxEntity(
-                            id = UUID.randomUUID().toString(),
-                            operationType = "UPSERT",
-                            entityType = "ATTENDANCE",
-                            entityId = attendanceId,
-                            payload = payload,
-                            createdAt = System.currentTimeMillis(),
-                            status = "PENDING",
-                            teacherId = teacherId
-                        )
-                    )
                     OutboxSyncScheduler.scheduleSync()
 
                     Result.success(SyncResult(attendance, BatchSyncStatus.QUEUED_OFFLINE))
@@ -708,9 +742,15 @@ class SupabaseAttendanceRepository(
                     )
                 }
 
-                db.withTransaction {
-                    attDao.upsertAttendance(entities)
-                    outDao.insertOperations(outboxOps)
+                val savedBatch = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    db.withTransaction {
+                        attDao.upsertAttendance(entities)
+                        outDao.insertOperations(outboxOps)
+                    }
+                    true
+                }
+                if (savedBatch == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر حفظ دفعة الحضور محلياً."))
                 }
 
                 try {
@@ -769,21 +809,47 @@ class SupabaseAttendanceRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                attendanceDao?.deleteAttendanceById(teacherId, attendanceId)
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val deleted = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            attendanceDao?.deleteAttendanceById(teacherId, attendanceId)
+                            val payload = "{\"id\":\"$attendanceId\"}"
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "DELETE",
+                                    entityType = "ATTENDANCE",
+                                    entityId = attendanceId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        attendanceDao?.deleteAttendanceById(teacherId, attendanceId)
+                        val payload = "{\"id\":\"$attendanceId\"}"
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "DELETE",
+                                entityType = "ATTENDANCE",
+                                entityId = attendanceId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (deleted == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر الحذف محلياً."))
+                }
 
-                val payload = "{\"id\":\"$attendanceId\"}"
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "DELETE",
-                        entityType = "ATTENDANCE",
-                        entityId = attendanceId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(Unit)

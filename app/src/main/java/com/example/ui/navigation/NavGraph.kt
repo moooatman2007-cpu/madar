@@ -243,11 +243,17 @@ fun MainAppNavigation(
             composable("status/{status}") { backStackEntry ->
                 val status = backStackEntry.arguments?.getString("status") ?: "pending"
                 val scope = rememberCoroutineScope()
+                val context = androidx.compose.ui.platform.LocalContext.current
                 StatusScreen(status = status, onLogout = {
                     scope.launch {
-                        AccountSessionManager.logout()
-                        navController.navigate(Screen.Auth.route) {
-                            popUpTo(0) { inclusive = true }
+                        val result = AccountSessionManager.logout()
+                        if (result.isSuccess) {
+                            navController.navigate(Screen.Auth.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        } else {
+                            val errorMsg = result.exceptionOrNull()?.localizedMessage ?: "حدث خطأ أثناء تسجيل الخروج"
+                            android.widget.Toast.makeText(context, errorMsg, android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
                 })

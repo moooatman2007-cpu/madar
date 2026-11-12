@@ -13,6 +13,7 @@ import com.example.data.local.entity.OutboxEntity
 import com.example.data.local.mapper.toDomain
 import com.example.data.local.mapper.toEntity
 import com.example.data.sync.OutboxSyncScheduler
+import androidx.room.withTransaction
 import com.example.util.DateUtils
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
@@ -374,22 +375,48 @@ class SupabaseExamRepository(
 
             // Offline fallback
             try {
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val exam = dto.toExam(teacherId = teacherId)
-                examDao?.upsertSingleExam(exam.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            examDao?.upsertSingleExam(exam.toEntity())
+                            val payload = kotlinx.serialization.json.Json.encodeToString(dto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "INSERT",
+                                    entityType = "EXAM",
+                                    entityId = generatedId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        examDao?.upsertSingleExam(exam.toEntity())
+                        val payload = kotlinx.serialization.json.Json.encodeToString(dto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "INSERT",
+                                entityType = "EXAM",
+                                entityId = generatedId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر إضافة الامتحان محلياً."))
+                }
 
-                val payload = kotlinx.serialization.json.Json.encodeToString(dto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "INSERT",
-                        entityType = "EXAM",
-                        entityId = generatedId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(SyncResult(exam, BatchSyncStatus.QUEUED_OFFLINE))
@@ -435,33 +462,70 @@ class SupabaseExamRepository(
             e.printStackTrace()
             // Offline fallback
             try {
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val examWithTeacher = exam.copy(teacherId = teacherId)
-                examDao?.upsertSingleExam(examWithTeacher.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            examDao?.upsertSingleExam(examWithTeacher.toEntity())
+                            val dto = SupabaseExamDto(
+                                id = exam.examId,
+                                teacherId = teacherId,
+                                studentId = exam.studentId,
+                                date = exam.date,
+                                examName = exam.examName,
+                                subject = exam.subject,
+                                score = exam.score,
+                                maxScore = exam.maxScore,
+                                note = exam.note
+                            )
+                            val payload = kotlinx.serialization.json.Json.encodeToString(dto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPDATE",
+                                    entityType = "EXAM",
+                                    entityId = exam.examId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        examDao?.upsertSingleExam(examWithTeacher.toEntity())
+                        val dto = SupabaseExamDto(
+                            id = exam.examId,
+                            teacherId = teacherId,
+                            studentId = exam.studentId,
+                            date = exam.date,
+                            examName = exam.examName,
+                            subject = exam.subject,
+                            score = exam.score,
+                            maxScore = exam.maxScore,
+                            note = exam.note
+                        )
+                        val payload = kotlinx.serialization.json.Json.encodeToString(dto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "UPDATE",
+                                entityType = "EXAM",
+                                entityId = exam.examId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر تعديل الامتحان محلياً."))
+                }
 
-                val dto = SupabaseExamDto(
-                    id = exam.examId,
-                    teacherId = teacherId,
-                    studentId = exam.studentId,
-                    date = exam.date,
-                    examName = exam.examName,
-                    subject = exam.subject,
-                    score = exam.score,
-                    maxScore = exam.maxScore,
-                    note = exam.note
-                )
-                val payload = kotlinx.serialization.json.Json.encodeToString(dto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPDATE",
-                        entityType = "EXAM",
-                        entityId = exam.examId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(examWithTeacher)
@@ -490,21 +554,47 @@ class SupabaseExamRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                examDao?.deleteById(teacherId, examId)
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val deleted = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            examDao?.deleteById(teacherId, examId)
+                            val payload = "{\"id\":\"$examId\"}"
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "DELETE",
+                                    entityType = "EXAM",
+                                    entityId = examId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        examDao?.deleteById(teacherId, examId)
+                        val payload = "{\"id\":\"$examId\"}"
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "DELETE",
+                                entityType = "EXAM",
+                                entityId = examId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (deleted == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر حذف الامتحان محلياً."))
+                }
 
-                val payload = "{\"id\":\"$examId\"}"
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "DELETE",
-                        entityType = "EXAM",
-                        entityId = examId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(Unit)

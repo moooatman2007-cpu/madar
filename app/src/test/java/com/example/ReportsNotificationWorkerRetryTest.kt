@@ -80,6 +80,10 @@ class ReportsNotificationWorkerRetryTest {
             return workerResultBuilder()
         }
 
+        override suspend fun getPendingRecitations(): Result<List<com.example.core.model.PendingRecitationNotificationDto>> {
+            return Result.success(emptyList())
+        }
+
         override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> {
             return Result.success(ApproveRecitationResult.Success("event_mock", recitationId))
         }

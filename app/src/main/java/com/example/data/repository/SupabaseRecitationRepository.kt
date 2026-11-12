@@ -13,6 +13,7 @@ import com.example.data.local.entity.OutboxEntity
 import com.example.data.local.mapper.toDomain
 import com.example.data.local.mapper.toEntity
 import com.example.data.sync.OutboxSyncScheduler
+import androidx.room.withTransaction
 import com.example.util.DateUtils
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
@@ -370,22 +371,48 @@ class SupabaseRecitationRepository(
 
             // Offline fallback
             try {
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val recitation = dto.toRecitation(teacherId = teacherId)
-                recitationDao?.upsertSingleRecitation(recitation.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            recitationDao?.upsertSingleRecitation(recitation.toEntity())
+                            val payload = Json.encodeToString(dto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "INSERT",
+                                    entityType = "RECITATION",
+                                    entityId = generatedId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        recitationDao?.upsertSingleRecitation(recitation.toEntity())
+                        val payload = Json.encodeToString(dto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "INSERT",
+                                entityType = "RECITATION",
+                                entityId = generatedId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر إضافة التسميع محلياً."))
+                }
 
-                val payload = Json.encodeToString(dto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "INSERT",
-                        entityType = "RECITATION",
-                        entityId = generatedId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(SyncResult(recitation, BatchSyncStatus.QUEUED_OFFLINE))
@@ -431,33 +458,70 @@ class SupabaseRecitationRepository(
             e.printStackTrace()
             // Offline fallback
             try {
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val recitationWithTeacher = recitation.copy(teacherId = teacherId)
-                recitationDao?.upsertSingleRecitation(recitationWithTeacher.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            recitationDao?.upsertSingleRecitation(recitationWithTeacher.toEntity())
+                            val dto = SupabaseRecitationDto(
+                                id = recitation.recitationId,
+                                teacherId = teacherId,
+                                studentId = recitation.studentId,
+                                date = recitation.date,
+                                title = recitation.title,
+                                content = recitation.content,
+                                score = recitation.score,
+                                maxScore = recitation.maxScore,
+                                note = recitation.note
+                            )
+                            val payload = Json.encodeToString(dto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPDATE",
+                                    entityType = "RECITATION",
+                                    entityId = recitation.recitationId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        recitationDao?.upsertSingleRecitation(recitationWithTeacher.toEntity())
+                        val dto = SupabaseRecitationDto(
+                            id = recitation.recitationId,
+                            teacherId = teacherId,
+                            studentId = recitation.studentId,
+                            date = recitation.date,
+                            title = recitation.title,
+                            content = recitation.content,
+                            score = recitation.score,
+                            maxScore = recitation.maxScore,
+                            note = recitation.note
+                        )
+                        val payload = Json.encodeToString(dto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "UPDATE",
+                                entityType = "RECITATION",
+                                entityId = recitation.recitationId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر تعديل التسميع محلياً."))
+                }
 
-                val dto = SupabaseRecitationDto(
-                    id = recitation.recitationId,
-                    teacherId = teacherId,
-                    studentId = recitation.studentId,
-                    date = recitation.date,
-                    title = recitation.title,
-                    content = recitation.content,
-                    score = recitation.score,
-                    maxScore = recitation.maxScore,
-                    note = recitation.note
-                )
-                val payload = Json.encodeToString(dto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPDATE",
-                        entityType = "RECITATION",
-                        entityId = recitation.recitationId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(recitationWithTeacher)
@@ -486,21 +550,47 @@ class SupabaseRecitationRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                recitationDao?.deleteById(teacherId, recitationId)
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val deleted = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            recitationDao?.deleteById(teacherId, recitationId)
+                            val payload = "{\"id\":\"$recitationId\"}"
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "DELETE",
+                                    entityType = "RECITATION",
+                                    entityId = recitationId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        recitationDao?.deleteById(teacherId, recitationId)
+                        val payload = "{\"id\":\"$recitationId\"}"
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "DELETE",
+                                entityType = "RECITATION",
+                                entityId = recitationId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (deleted == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر حذف التسميع محلياً."))
+                }
 
-                val payload = "{\"id\":\"$recitationId\"}"
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "DELETE",
-                        entityType = "RECITATION",
-                        entityId = recitationId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
 
                 Result.success(Unit)

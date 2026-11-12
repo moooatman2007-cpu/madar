@@ -49,6 +49,11 @@ interface NotificationEventRepository {
     suspend fun createNotificationEvent(event: NotificationEvent): NotificationEventCreationResult
 
     /**
+     * Retrieves all pending recitation notification events awaiting teacher approval.
+     */
+    suspend fun getPendingRecitations(): Result<List<com.example.core.model.PendingRecitationNotificationDto>>
+
+    /**
      * Approves a recitation notification event for sending.
      */
     suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult>

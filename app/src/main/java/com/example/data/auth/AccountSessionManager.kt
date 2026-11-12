@@ -40,6 +40,8 @@ object AccountSessionManager {
     private val mutex = Mutex()
     @Volatile
     private var activeTeacherId: String? = null
+    @Volatile
+    private var isTeardownInProgress = false
 
     fun setActiveTeacherId(teacherId: String?) {
         activeTeacherId = teacherId
@@ -53,7 +55,7 @@ object AccountSessionManager {
     }
 
     fun isSessionActive(teacherId: String?): Boolean {
-        if (teacherId.isNullOrBlank()) return false
+        if (teacherId.isNullOrBlank() || isTeardownInProgress) return false
 
         val mockId = SupabaseClientProvider.mockTeacherId
         if (mockId != null) {
@@ -68,6 +70,25 @@ object AccountSessionManager {
         // If explicitly tracked, must match tracked ID
         val tracked = activeTeacherId
         return tracked == null || tracked == teacherId
+    }
+
+    /**
+     * Shared Session Write Gate:
+     * Coordinates local Room entity + Outbox operations with session teardown.
+     * Uses [mutex] to guarantee atomic check and write execution without race conditions against logout.
+     */
+    suspend fun <T> runIfSessionActive(
+        teacherId: String,
+        block: suspend () -> T
+    ): T? {
+        if (teacherId.isBlank()) return null
+        return mutex.withLock {
+            if (!isSessionActive(teacherId)) {
+                Log.w(TAG, "runIfSessionActive: Session inactive or teardown in progress for teacher '$teacherId'")
+                return@withLock null
+            }
+            block()
+        }
     }
 
     /** Explicit sign-out: wipes this teacher's local data and Outbox, then signs out remotely. */
@@ -93,8 +114,43 @@ object AccountSessionManager {
     ): Result<Unit> = withContext(NonCancellable + Dispatchers.IO) {
         mutex.withLock {
             try {
+                isTeardownInProgress = true
                 val targetTeacherId = getActiveTeacherId()
                 Log.d(TAG, "Starting session teardown (remoteSignOut=$remoteSignOut, wipeLocalData=$wipeLocalData)")
+
+                // P0 Data Loss Prevention: Check for unsynced Outbox operations before any destructive logout actions
+                if (wipeLocalData && !targetTeacherId.isNullOrBlank()) {
+                    val db = try { DatabaseProvider.getDatabase() } catch (e: Exception) { null }
+                    if (db == null) {
+                        isTeardownInProgress = false
+                        val msg = "تعذر الوصول لقاعدة البيانات للتحقق من العمليات قبل تسجيل الخروج لضمان عدم فقد البيانات."
+                        Log.e(TAG, "Logout aborted: DatabaseProvider.getDatabase() returned null")
+                        return@withContext Result.failure(IllegalStateException(msg))
+                    }
+
+                    val unsynced = try {
+                        db.outboxDao().getUnsyncedOperationsForTeacher(targetTeacherId)
+                    } catch (e: Exception) {
+                        isTeardownInProgress = false
+                        val msg = "تعذر فحص عمليات Outbox قبل تسجيل الخروج: ${e.localizedMessage}"
+                        Log.e(TAG, "Logout aborted due to exception in outbox query", e)
+                        return@withContext Result.failure(IllegalStateException(msg, e))
+                    }
+
+                    if (unsynced.isNotEmpty()) {
+                        isTeardownInProgress = false
+                        val hasPermanent = unsynced.any { op ->
+                            op.status == "FAILED" && (op.retryCount >= 5 || isPermanentErrorText(op.lastError))
+                        }
+                        val msg = if (hasPermanent) {
+                            "توجد عمليات فشلت بشكل دائم ولم تتم مزامنتها. يرجى معالجة الأخطاء أو محاولة المزامنة قبل تسجيل الخروج لضمان عدم فقدان البيانات."
+                        } else {
+                            "توجد بيانات تنتظر المزامنة. يرجى الانتظار حتى اكتمال المزامنة أو المحاولة لاحقاً قبل تسجيل الخروج."
+                        }
+                        Log.w(TAG, "Logout aborted due to ${unsynced.size} unsynced outbox operations (hasPermanent=$hasPermanent)")
+                        return@withContext Result.failure(IllegalStateException(msg))
+                    }
+                }
 
                 // 1. Immediately cancel active and queued WorkManager synchronization jobs
                 try {
@@ -108,8 +164,6 @@ object AccountSessionManager {
                 SupabaseClientProvider.mockTeacherId = null
 
                 // 3. Wipe tenant-scoped Room data + Outbox ONLY on explicit logout.
-                //    (Unknown teacher => do NOT fall back to clearAllData(): that would delete
-                //    other accounts' unsynced work.)
                 if (wipeLocalData && !targetTeacherId.isNullOrBlank()) {
                     try {
                         DatabaseProvider.clearDataForTeacher(targetTeacherId)
@@ -140,7 +194,26 @@ object AccountSessionManager {
             } catch (e: Exception) {
                 Log.e(TAG, "Fatal error during account session teardown", e)
                 Result.failure(e)
+            } finally {
+                isTeardownInProgress = false
             }
         }
+    }
+
+    private val PERMANENT_PHRASES = listOf(
+        "violates foreign key",
+        "violates unique constraint",
+        "duplicate key value",
+        "bad request",
+        "unprocessable"
+    )
+    private val PERMANENT_SQLSTATE = Regex("""\b(23503|23505|23502|42p01|42703)\b""", RegexOption.IGNORE_CASE)
+    private val PERMANENT_HTTP = Regex("""\b(400|404|422)\b\s*[:\-]?\s*(bad request|not found|unprocessable)""", RegexOption.IGNORE_CASE)
+
+    private fun isPermanentErrorText(raw: String?): Boolean {
+        val msg = raw?.lowercase() ?: return false
+        return PERMANENT_PHRASES.any { msg.contains(it) } ||
+            PERMANENT_SQLSTATE.containsMatchIn(msg) ||
+            PERMANENT_HTTP.containsMatchIn(msg)
     }
 }

@@ -135,6 +135,8 @@ private fun CameraPreviewScanner(
     // Use Atomic references for debounce tracking (500ms debounce window) so updates do NOT trigger Compose recomposition
     val lastScannedCodeRef = remember { AtomicReference("") }
     val lastScannedTimeRef = remember { AtomicLong(0L) }
+    val cameraControlRef = remember { AtomicReference<androidx.camera.core.CameraControl?>(null) }
+    val isTorchOnRef = remember { androidx.compose.runtime.mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -160,6 +162,15 @@ private fun CameraPreviewScanner(
             factory = { ctx ->
                 val previewView = PreviewView(ctx).apply {
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                    setOnTouchListener { view, event ->
+                        if (event.action == android.view.MotionEvent.ACTION_DOWN) {
+                            val factory = (view as PreviewView).meteringPointFactory
+                            val point = factory.createPoint(event.x, event.y)
+                            val action = androidx.camera.core.FocusMeteringAction.Builder(point, androidx.camera.core.FocusMeteringAction.FLAG_AF).build()
+                            cameraControlRef.get()?.startFocusAndMetering(action)
+                            true
+                        } else false
+                    }
                 }
 
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
@@ -232,12 +243,16 @@ private fun CameraPreviewScanner(
                         }
 
                         cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
+                        val camera = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             imageAnalysis
                         )
+                        // Enable camera control
+                        val cameraControl = camera.cameraControl
+                        cameraControlRef.set(cameraControl)
+                        cameraControl.setLinearZoom(0f) // Start with no zoom
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -255,6 +270,23 @@ private fun CameraPreviewScanner(
                 .border(2.dp, Color.Green.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
                 .background(Color.Transparent)
         )
+        // Torch control
+        androidx.compose.material3.TextButton(
+            onClick = {
+                val control = cameraControlRef.get()
+                if (control != null) {
+                    val newState = !isTorchOnRef.value
+                    control.enableTorch(newState)
+                    isTorchOnRef.value = newState
+                }
+            },
+            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
+        ) {
+            androidx.compose.material3.Text(
+                text = if (isTorchOnRef.value) "OFF" else "ON",
+                color = Color.White
+            )
+        }
     }
 }
 

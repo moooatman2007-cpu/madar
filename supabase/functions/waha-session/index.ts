@@ -140,6 +140,7 @@ Deno.serve(async (req: Request) => {
     const action = body.action || "TEST_WAHA_CONNECTION";
     const supportedActions = new Set([
       "START",
+      "GET_QR",
       "LOGOUT",
       "TEST_WAHA_CONNECTION",
       "REQUEST_PAIRING_CODE",
@@ -516,7 +517,7 @@ Deno.serve(async (req: Request) => {
     // =========================================================================
     // ACTION: START
     // =========================================================================
-    if (action === "START") {
+    if (action === "START" || action === "GET_QR") {
       if (!wahaWebhookSecret || !wahaWebhookSecret.trim()) {
         return jsonResponse(
           {
@@ -694,11 +695,26 @@ Deno.serve(async (req: Request) => {
       // Step C: Start session if stopped or not running
       if (sessionStatus !== "SCAN_QR_CODE" && sessionStatus !== "STARTING") {
         try {
-          await fetchWithTimeout(
+          const startRes = await fetchWithTimeout(
             `${wahaBaseUrl}/api/sessions/${encodeURIComponent(sessionName)}/start`,
             { method: "POST", headers: wahaHeaders },
             12000
           );
+          if (!startRes.ok && startRes.status !== 409) {
+            const startErr = await readResponseBody(startRes);
+            const startErrMsg = extractWahaErrorMessage(startErr);
+            console.error("WAHA start request failed:", startRes.status, startErrMsg);
+            return jsonResponse(
+              {
+                success: false,
+                reachable: true,
+                session_exists: true,
+                status: "FAILED",
+                message: startErrMsg || `فشل تشغيل جلسة واتساب في الخادم (رمز الخطأ: ${startRes.status})`,
+              },
+              502
+            );
+          }
         } catch (err) {
           console.warn("WAHA start request notice:", err);
         }

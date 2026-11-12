@@ -40,6 +40,12 @@ object SafeAuthErrorMapper {
             return getDefaultFallbackMessage(context)
         }
 
+        // 0. If the throwable message is already localized Arabic text, preserve it safely
+        val msg = throwable.message
+        if (!msg.isNullOrBlank() && msg.any { it in '\u0600'..'\u06FF' } && !containsSensitiveData(msg)) {
+            return sanitizeOutput(msg, context)
+        }
+
         // 1. Check if throwable is AuthRestException with structured AuthErrorCode
         if (throwable is AuthRestException) {
             val fromCode = mapAuthErrorCodeToArabic(throwable.errorCode, context)

@@ -8,6 +8,7 @@ import com.example.data.repository.MockAttendanceRepository
 import com.example.data.repository.MockExamRepository
 import com.example.data.repository.MockGradeRepository
 import com.example.data.repository.MockHomeworkRepository
+import com.example.data.repository.ApproveRecitationResult
 import com.example.data.repository.NotificationEventRepository
 import com.example.core.model.NotificationEvent
 import com.example.data.repository.NotificationEventCreationResult
@@ -63,6 +64,10 @@ class AttendanceUnificationComprehensiveTest {
         }
         override suspend fun triggerNotificationWorker(eventType: String?): NotificationWorkerResult {
             return NotificationWorkerResult.Success("OK")
+        }
+
+        override suspend fun getPendingRecitations(): Result<List<com.example.core.model.PendingRecitationNotificationDto>> {
+            return Result.success(emptyList())
         }
 
         override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> {

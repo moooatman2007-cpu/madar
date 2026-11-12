@@ -13,6 +13,7 @@ import com.example.data.local.entity.OutboxEntity
 import com.example.data.local.mapper.toDomain
 import com.example.data.local.mapper.toEntity
 import com.example.data.sync.OutboxSyncScheduler
+import androidx.room.withTransaction
 import com.example.util.DateUtils
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
@@ -278,22 +279,48 @@ class SupabaseHomeworkRepository(
             e.printStackTrace()
             // Offline fallback
             try {
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val homework = dto.toHomework(teacherId)
-                homeworkDao?.upsertSingleHomework(homework.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            homeworkDao?.upsertSingleHomework(homework.toEntity())
+                            val payload = Json.encodeToString(dto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "INSERT",
+                                    entityType = "HOMEWORK",
+                                    entityId = generatedId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        homeworkDao?.upsertSingleHomework(homework.toEntity())
+                        val payload = Json.encodeToString(dto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "INSERT",
+                                entityType = "HOMEWORK",
+                                entityId = generatedId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر إضافة الواجب محلياً."))
+                }
 
-                val payload = Json.encodeToString(dto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "INSERT",
-                        entityType = "HOMEWORK",
-                        entityId = generatedId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
                 Result.success(SyncResult(homework, BatchSyncStatus.QUEUED_OFFLINE))
             } catch (ex: Exception) {
@@ -334,31 +361,66 @@ class SupabaseHomeworkRepository(
             e.printStackTrace()
             // Offline fallback
             try {
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
                 val homeworkWithTeacher = if (homework.teacherId.isBlank()) homework.copy(teacherId = teacherId) else homework
-                homeworkDao?.upsertSingleHomework(homeworkWithTeacher.toEntity())
+                val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            homeworkDao?.upsertSingleHomework(homeworkWithTeacher.toEntity())
+                            val dto = SupabaseHomeworkDto(
+                                id = homework.homeworkId,
+                                teacherId = teacherId,
+                                studentId = homework.studentId,
+                                homeworkDate = homework.date,
+                                title = homework.title,
+                                status = homework.status.toSupabaseStatus(),
+                                description = homework.note ?: ""
+                            )
+                            val payload = Json.encodeToString(dto)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPDATE",
+                                    entityType = "HOMEWORK",
+                                    entityId = homework.homeworkId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        homeworkDao?.upsertSingleHomework(homeworkWithTeacher.toEntity())
+                        val dto = SupabaseHomeworkDto(
+                            id = homework.homeworkId,
+                            teacherId = teacherId,
+                            studentId = homework.studentId,
+                            homeworkDate = homework.date,
+                            title = homework.title,
+                            status = homework.status.toSupabaseStatus(),
+                            description = homework.note ?: ""
+                        )
+                        val payload = Json.encodeToString(dto)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "UPDATE",
+                                entityType = "HOMEWORK",
+                                entityId = homework.homeworkId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (written == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر تعديل الواجب محلياً."))
+                }
 
-                val dto = SupabaseHomeworkDto(
-                    id = homework.homeworkId,
-                    teacherId = teacherId,
-                    studentId = homework.studentId,
-                    homeworkDate = homework.date,
-                    title = homework.title,
-                    status = homework.status.toSupabaseStatus(),
-                    description = homework.note ?: ""
-                )
-                val payload = Json.encodeToString(dto)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPDATE",
-                        entityType = "HOMEWORK",
-                        entityId = homework.homeworkId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
                 Result.success(homeworkWithTeacher)
             } catch (ex: Exception) {
@@ -385,21 +447,47 @@ class SupabaseHomeworkRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                homeworkDao?.deleteById(teacherId, homeworkId)
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val deleted = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            homeworkDao?.deleteById(teacherId, homeworkId)
+                            val payload = "{\"id\":\"$homeworkId\"}"
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "DELETE",
+                                    entityType = "HOMEWORK",
+                                    entityId = homeworkId,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        homeworkDao?.deleteById(teacherId, homeworkId)
+                        val payload = "{\"id\":\"$homeworkId\"}"
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "DELETE",
+                                entityType = "HOMEWORK",
+                                entityId = homeworkId,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (deleted == null) {
+                    return@withContext Result.failure(Exception("انتهت الجلسة، تعذر حذف الواجب محلياً."))
+                }
 
-                val payload = "{\"id\":\"$homeworkId\"}"
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "DELETE",
-                        entityType = "HOMEWORK",
-                        entityId = homeworkId,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
                 OutboxSyncScheduler.scheduleSync()
                 Result.success(Unit)
             } catch (ex: Exception) {

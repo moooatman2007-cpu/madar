@@ -213,7 +213,13 @@ class SupabaseGroupRepository(
                 createdAt = System.currentTimeMillis(),
                 teacherId = authId
             )
-            outboxDao?.insertOperation(outbox)
+            val written = com.example.data.auth.AccountSessionManager.runIfSessionActive(authId) {
+                outboxDao?.insertOperation(outbox)
+                true
+            }
+            if (written == null) {
+                return@withContext Result.failure(Exception("انتهت الجلسة، تعذر تحديث مجموعة الطالب محلياً."))
+            }
             OutboxSyncScheduler.scheduleSync()
 
             Result.success(Unit)
@@ -301,6 +307,8 @@ class SupabaseGroupRepository(
             createdAt = System.currentTimeMillis(),
             teacherId = authId
         )
-        outboxDao?.insertOperation(outbox)
+        com.example.data.auth.AccountSessionManager.runIfSessionActive(authId) {
+            outboxDao?.insertOperation(outbox)
+        }
     }
 }

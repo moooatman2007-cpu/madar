@@ -95,6 +95,11 @@ data class StudentDetailUiState(
     val showRecitationDialog: Boolean = false,
     val recitationToEdit: Recitation? = null,
     val recitationToDelete: Recitation? = null,
+    val pendingRecitations: List<com.example.core.model.PendingRecitationNotificationDto> = emptyList(),
+    val isLoadingPendingRecitations: Boolean = false,
+    val pendingRecitationsError: String? = null,
+    val approvingRecitationIds: Set<String> = emptySet(),
+    val failedWorkerRecitationIds: Set<String> = emptySet(),
 
     // Exams State
     val exams: List<Exam> = emptyList(),
@@ -188,6 +193,9 @@ class StudentDetailViewModel(
 
     fun selectTab(tab: StudentDetailTab) {
         _uiState.update { it.copy(selectedTab = tab) }
+        if (tab == StudentDetailTab.RECITATIONS) {
+            loadPendingRecitations()
+        }
     }
 
     fun navigateMonth(delta: Int) {
@@ -721,6 +729,122 @@ class StudentDetailViewModel(
                 }
             } finally {
                 _uiState.update { it.copy(isSaving = false) }
+            }
+        }
+    }
+
+    fun loadPendingRecitations() {
+        val currentStudentId = _uiState.value.student?.studentId ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingPendingRecitations = true, pendingRecitationsError = null) }
+            val result = notificationEventRepository.getPendingRecitations()
+            result.fold(
+                onSuccess = { allPending ->
+                    // Strict filtering: ONLY items matching the current student
+                    val studentPending = allPending.filter { it.studentId == currentStudentId }
+                    _uiState.update {
+                        it.copy(
+                            pendingRecitations = studentPending,
+                            isLoadingPendingRecitations = false,
+                            pendingRecitationsError = null
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingPendingRecitations = false,
+                            pendingRecitationsError = error.message ?: "فشل جلب قائمة التسميعات المنتظرة"
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun approveRecitationNotification(recitationId: String) {
+        // Debounce / in-flight protection
+        val currentApproving = _uiState.value.approvingRecitationIds
+        if (currentApproving.contains(recitationId)) return
+
+        _uiState.update {
+            it.copy(
+                approvingRecitationIds = it.approvingRecitationIds + recitationId,
+                failedWorkerRecitationIds = it.failedWorkerRecitationIds - recitationId
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                val approvalResult = notificationEventRepository.approveRecitation(recitationId)
+                if (approvalResult.isSuccess) {
+                    val approval = approvalResult.getOrThrow()
+                    val isAlreadyApproved = approval is com.example.data.repository.ApproveRecitationResult.AlreadyApproved
+
+                    // Update UI state: remove approved recitation from pending list
+                    _uiState.update { state ->
+                        state.copy(
+                            pendingRecitations = state.pendingRecitations.filterNot { it.recitationId == recitationId }
+                        )
+                    }
+
+                    // Trigger notification worker after successful approval
+                    val workerResult = notificationEventRepository.triggerNotificationWorker("RECITATION")
+                    when (workerResult) {
+                        is com.example.data.repository.NotificationWorkerResult.Success -> {
+                            val msg = if (isAlreadyApproved) {
+                                "تم اعتماد التسميع مسبقاً وبدء المعالجة بنجاح ✅"
+                            } else {
+                                "تم اعتماد التسميع وبدء إرسال الإشعار بنجاح ✅"
+                            }
+                            _events.emit(StudentDetailEvent.ShowMessage(msg))
+                        }
+                        is com.example.data.repository.NotificationWorkerResult.Skipped -> {
+                            _events.emit(StudentDetailEvent.ShowMessage("تم اعتماد التسميع بنجاح ✅"))
+                        }
+                        is com.example.data.repository.NotificationWorkerResult.Error -> {
+                            _uiState.update { it.copy(failedWorkerRecitationIds = it.failedWorkerRecitationIds + recitationId) }
+                            _events.emit(StudentDetailEvent.ShowMessage("تم حفظ الاعتماد بنجاح، لكن تعذر بدء الإرسال التلقائي: ${workerResult.message}"))
+                        }
+                    }
+                } else {
+                    val errMsg = approvalResult.exceptionOrNull()?.message ?: "فشل اعتماد التسميع"
+                    _events.emit(StudentDetailEvent.ShowMessage("فشل الاعتماد: $errMsg"))
+                }
+            } catch (e: Exception) {
+                _events.emit(StudentDetailEvent.ShowMessage("خطأ أثناء الاعتماد: ${e.message}"))
+            } finally {
+                _uiState.update { it.copy(approvingRecitationIds = it.approvingRecitationIds - recitationId) }
+            }
+        }
+    }
+
+    fun retryRecitationWorker(recitationId: String) {
+        val currentApproving = _uiState.value.approvingRecitationIds
+        if (currentApproving.contains(recitationId)) return
+
+        _uiState.update { it.copy(approvingRecitationIds = it.approvingRecitationIds + recitationId) }
+
+        viewModelScope.launch {
+            try {
+                val workerResult = notificationEventRepository.triggerNotificationWorker("RECITATION")
+                when (workerResult) {
+                    is com.example.data.repository.NotificationWorkerResult.Success -> {
+                        _uiState.update { it.copy(failedWorkerRecitationIds = it.failedWorkerRecitationIds - recitationId) }
+                        _events.emit(StudentDetailEvent.ShowMessage("تمت إعادة تشغيل معالج الإرسال بنجاح ✅"))
+                    }
+                    is com.example.data.repository.NotificationWorkerResult.Skipped -> {
+                        _uiState.update { it.copy(failedWorkerRecitationIds = it.failedWorkerRecitationIds - recitationId) }
+                        _events.emit(StudentDetailEvent.ShowMessage("تم استئناف المعالجة"))
+                    }
+                    is com.example.data.repository.NotificationWorkerResult.Error -> {
+                        _events.emit(StudentDetailEvent.ShowMessage("فشلت إعادة محاولة الإرسال: ${workerResult.message}"))
+                    }
+                }
+            } catch (e: Exception) {
+                _events.emit(StudentDetailEvent.ShowMessage("خطأ أثناء تشغيل المعالج: ${e.message}"))
+            } finally {
+                _uiState.update { it.copy(approvingRecitationIds = it.approvingRecitationIds - recitationId) }
             }
         }
     }

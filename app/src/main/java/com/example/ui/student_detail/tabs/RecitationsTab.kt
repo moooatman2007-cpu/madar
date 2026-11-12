@@ -37,6 +37,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
+import com.example.core.model.PendingRecitationNotificationDto
 import com.example.core.model.Recitation
 import com.example.core.model.RecitationSummary
 import com.example.core.model.Student
@@ -54,6 +59,14 @@ fun RecitationsTab(
     student: Student,
     recitations: List<Recitation>,
     summary: RecitationSummary,
+    pendingRecitations: List<PendingRecitationNotificationDto> = emptyList(),
+    isLoadingPending: Boolean = false,
+    pendingError: String? = null,
+    approvingIds: Set<String> = emptySet(),
+    failedWorkerIds: Set<String> = emptySet(),
+    onRefreshPending: () -> Unit = {},
+    onApprovePending: (String) -> Unit = {},
+    onRetryWorker: (String) -> Unit = {},
     onAddRecitation: () -> Unit,
     onEditRecitation: (Recitation) -> Unit,
     onDeleteRecitation: (Recitation) -> Unit,
@@ -107,6 +120,259 @@ fun RecitationsTab(
                         unit = "المعدل العام",
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        // ==========================================
+        // PENDING RECITATIONS APPROVAL SECTION
+        // ==========================================
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("pending_recitations_section_card"),
+            shape = RoundedCornerShape(Dimens.Radius20),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Dimens.Spacing16),
+                verticalArrangement = Arrangement.spacedBy(Dimens.Spacing12)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(WarmAmber.copy(alpha = 0.15f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HourglassTop,
+                                contentDescription = null,
+                                tint = WarmAmber,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(Dimens.Spacing8))
+                        Column {
+                            Text(
+                                text = "تسميعات بانتظار موافقة المدرس",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "لن يتم إرسال إشعار واتساب إلا بعد اعتمادك",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onRefreshPending,
+                        modifier = Modifier.testTag("refresh_pending_recitations_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "تحديث",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                if (isLoadingPending) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Dimens.Spacing16)
+                            .testTag("pending_recitations_loading"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                } else if (!pendingError.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(Dimens.Radius12),
+                        color = DangerRed.copy(alpha = 0.1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("pending_recitations_error")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(Dimens.Spacing12),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = pendingError,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DangerRed,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = onRefreshPending,
+                                shape = RoundedCornerShape(Dimens.Radius8),
+                                colors = ButtonDefaults.buttonColors(containerColor = DangerRed),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("إعادة المحاولة", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                } else if (pendingRecitations.isEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(Dimens.Radius12),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("pending_recitations_empty_state")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(Dimens.Spacing12),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = EmeraldGreen,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(Dimens.Spacing8))
+                            Text(
+                                text = "لا توجد تسميعات معلقة بانتظار الموافقة لهذا الطالب",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(Dimens.Spacing8),
+                        modifier = Modifier.testTag("pending_recitations_list")
+                    ) {
+                        pendingRecitations.forEach { pending ->
+                            val isApproving = approvingIds.contains(pending.recitationId)
+                            val hasFailedWorker = failedWorkerIds.contains(pending.recitationId)
+
+                            Card(
+                                shape = RoundedCornerShape(Dimens.Radius12),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("pending_recitation_item_${pending.recitationId}")
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(Dimens.Spacing12),
+                                    verticalArrangement = Arrangement.spacedBy(Dimens.Spacing8)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = pending.recitationTitle ?: "تسميع بدون عنوان",
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (!pending.recitationDate.isNullOrBlank()) {
+                                                Text(
+                                                    text = "التاريخ: ${pending.recitationDate}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(Dimens.Radius8),
+                                            color = EmeraldGreen.copy(alpha = 0.12f)
+                                        ) {
+                                            Text(
+                                                text = "${pending.score} / ${pending.maxScore}",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = EmeraldGreen,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(Dimens.Radius8),
+                                            color = WarmAmber.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = if (pending.teacherApproved) "معتمد" else "بانتظار الاعتماد",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = WarmAmber,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        if (hasFailedWorker) {
+                                            Button(
+                                                onClick = { onRetryWorker(pending.recitationId) },
+                                                enabled = !isApproving,
+                                                shape = RoundedCornerShape(Dimens.Radius8),
+                                                colors = ButtonDefaults.buttonColors(containerColor = WarmAmber),
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                modifier = Modifier.testTag("retry_worker_button_${pending.recitationId}")
+                                            ) {
+                                                if (isApproving) {
+                                                    CircularProgressIndicator(
+                                                        color = MaterialTheme.colorScheme.onPrimary,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                } else {
+                                                    Text("إعادة تشغيل معالج الإرسال", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                                                }
+                                            }
+                                        } else {
+                                            Button(
+                                                onClick = { onApprovePending(pending.recitationId) },
+                                                enabled = !isApproving,
+                                                shape = RoundedCornerShape(Dimens.Radius8),
+                                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                modifier = Modifier.testTag("approve_recitation_button_${pending.recitationId}")
+                                            ) {
+                                                if (isApproving) {
+                                                    CircularProgressIndicator(
+                                                        color = MaterialTheme.colorScheme.onPrimary,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                } else {
+                                                    Text("اعتماد وإرسال", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

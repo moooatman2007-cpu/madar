@@ -6,6 +6,7 @@ import com.example.core.model.ExamNotificationEventInsertDto
 import com.example.core.model.HomeworkNotificationEventInsertDto
 import com.example.core.model.MonthlyReportNotificationEventInsertDto
 import com.example.core.model.NotificationEvent
+import com.example.core.model.PendingRecitationNotificationDto
 import com.example.core.model.RecitationNotificationEventInsertDto
 import com.example.data.SupabaseClientProvider
 import io.github.jan.supabase.SupabaseClient
@@ -125,21 +126,43 @@ class SupabaseNotificationEventRepository(
         }
     }
 
+    override suspend fun getPendingRecitations(): Result<List<PendingRecitationNotificationDto>> = withContext(Dispatchers.IO) {
+        try {
+            val response = client.postgrest.rpc("get_pending_recitation_notifications")
+                .decodeList<PendingRecitationNotificationDto>()
+            Result.success(response)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(Exception("فشل جلب قائمة التسميعات المنتظرة: ${e.message}", e))
+        }
+    }
+
     override suspend fun approveRecitation(recitationId: String): Result<ApproveRecitationResult> = withContext(Dispatchers.IO) {
         try {
             val params = buildJsonObject { put("p_recitation_id", recitationId) }
             val response = client.postgrest.rpc("approve_recitation_notification", parameters = params)
                 .decodeSingle<ApproveRecitationResultDto>()
             
-            if (response.success) {
-                Result.success(ApproveRecitationResult.Success(
-                    response.eventId ?: "",
-                    response.recitationId ?: recitationId
-                ))
-            } else if (response.alreadyApproved) {
+            val retRecitationId = response.recitationId
+            val retEventId = response.eventId
+
+            if (retRecitationId.isNullOrBlank() || retEventId.isNullOrBlank()) {
+                return@withContext Result.failure(Exception(response.status ?: "استجابة اعتماد التسميع غير مكتملة (معرف الحدث أو التسميع مفقود)"))
+            }
+
+            if (retRecitationId != recitationId) {
+                return@withContext Result.failure(Exception("عدم تطابق في معرف التسميع المسترجع من الخادم"))
+            }
+
+            if (response.alreadyApproved) {
                 Result.success(ApproveRecitationResult.AlreadyApproved(
-                    response.eventId ?: "",
-                    response.recitationId ?: recitationId
+                    retEventId,
+                    retRecitationId
+                ))
+            } else if (response.success) {
+                Result.success(ApproveRecitationResult.Success(
+                    retEventId,
+                    retRecitationId
                 ))
             } else {
                 Result.failure(Exception(response.status ?: "فشل اعتماد التسميع"))

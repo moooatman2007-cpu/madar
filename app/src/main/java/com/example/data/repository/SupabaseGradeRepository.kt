@@ -11,6 +11,7 @@ import com.example.data.local.entity.OutboxEntity
 import com.example.data.local.mapper.toDomain
 import com.example.data.local.mapper.toEntity
 import com.example.data.sync.OutboxSyncScheduler
+import androidx.room.withTransaction
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Order
@@ -304,23 +305,47 @@ class SupabaseGradeRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                gradeDao?.upsertGrade(gradeWithTeacher.toEntity())
-
-                val payload = kotlinx.serialization.json.Json.encodeToString(gradeWithTeacher)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "INSERT",
-                        entityType = "GRADE",
-                        entityId = gradeWithTeacher.id,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
-                OutboxSyncScheduler.scheduleSync()
-                true
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val res = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            gradeDao?.upsertGrade(gradeWithTeacher.toEntity())
+                            val payload = kotlinx.serialization.json.Json.encodeToString(gradeWithTeacher)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "INSERT",
+                                    entityType = "GRADE",
+                                    entityId = gradeWithTeacher.id,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        gradeDao?.upsertGrade(gradeWithTeacher.toEntity())
+                        val payload = kotlinx.serialization.json.Json.encodeToString(gradeWithTeacher)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "INSERT",
+                                entityType = "GRADE",
+                                entityId = gradeWithTeacher.id,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (res == true) {
+                    OutboxSyncScheduler.scheduleSync()
+                    true
+                } else false
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 false
@@ -350,23 +375,47 @@ class SupabaseGradeRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                gradeDao?.upsertGrade(gradeWithTeacher.toEntity())
-
-                val payload = kotlinx.serialization.json.Json.encodeToString(gradeWithTeacher)
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "UPDATE",
-                        entityType = "GRADE",
-                        entityId = gradeWithTeacher.id,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
-                OutboxSyncScheduler.scheduleSync()
-                true
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val res = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            gradeDao?.upsertGrade(gradeWithTeacher.toEntity())
+                            val payload = kotlinx.serialization.json.Json.encodeToString(gradeWithTeacher)
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "UPDATE",
+                                    entityType = "GRADE",
+                                    entityId = gradeWithTeacher.id,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        gradeDao?.upsertGrade(gradeWithTeacher.toEntity())
+                        val payload = kotlinx.serialization.json.Json.encodeToString(gradeWithTeacher)
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "UPDATE",
+                                entityType = "GRADE",
+                                entityId = gradeWithTeacher.id,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (res == true) {
+                    OutboxSyncScheduler.scheduleSync()
+                    true
+                } else false
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 false
@@ -391,23 +440,47 @@ class SupabaseGradeRepository(
             e.printStackTrace()
             // Offline fallback
             try {
-                gradeDao?.deleteGrade(teacherId, id)
-
-                val payload = "{\"id\":\"$id\"}"
-                outboxDao?.insertOperation(
-                    OutboxEntity(
-                        id = UUID.randomUUID().toString(),
-                        operationType = "DELETE",
-                        entityType = "GRADE",
-                        entityId = id,
-                        payload = payload,
-                        createdAt = System.currentTimeMillis(),
-                        status = "PENDING",
-                        teacherId = teacherId
-                    )
-                )
-                OutboxSyncScheduler.scheduleSync()
-                true
+                val db = try { DatabaseProvider.getDatabase() } catch (_: Exception) { null }
+                val res = com.example.data.auth.AccountSessionManager.runIfSessionActive(teacherId) {
+                    if (db != null) {
+                        db.withTransaction {
+                            gradeDao?.deleteGrade(teacherId, id)
+                            val payload = "{\"id\":\"$id\"}"
+                            outboxDao?.insertOperation(
+                                OutboxEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    operationType = "DELETE",
+                                    entityType = "GRADE",
+                                    entityId = id,
+                                    payload = payload,
+                                    createdAt = System.currentTimeMillis(),
+                                    status = "PENDING",
+                                    teacherId = teacherId
+                                )
+                            )
+                        }
+                    } else {
+                        gradeDao?.deleteGrade(teacherId, id)
+                        val payload = "{\"id\":\"$id\"}"
+                        outboxDao?.insertOperation(
+                            OutboxEntity(
+                                id = UUID.randomUUID().toString(),
+                                operationType = "DELETE",
+                                entityType = "GRADE",
+                                entityId = id,
+                                payload = payload,
+                                createdAt = System.currentTimeMillis(),
+                                status = "PENDING",
+                                teacherId = teacherId
+                            )
+                        )
+                    }
+                    true
+                }
+                if (res == true) {
+                    OutboxSyncScheduler.scheduleSync()
+                    true
+                } else false
             } catch (ex: Exception) {
                 ex.printStackTrace()
                 false
